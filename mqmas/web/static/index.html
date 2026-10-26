@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MQ-MAS Office</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/office.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">MQ-MAS <span class="sub">Micro-Quant Multi-Agent System</span></div>
+    <div class="pills">
+      <span id="pill-mode" class="pill">—</span>
+      <span id="pill-conn" class="pill pill-bad">offline</span>
+      <span id="pill-lock" class="pill" hidden>CIRCUIT BREAKER</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="office-wrap">
+      <div id="office" class="office">
+        <canvas id="canvas" width="320" height="180"></canvas>
+        <div id="overlay" class="overlay"></div>
+      </div>
+      <div class="votes" id="votes"></div>
+    </section>
+
+    <aside class="panel">
+      <h2>Telemetria</h2>
+      <div class="grid" id="metrics">
+        <div class="metric"><label>BTC/USDT</label><b id="m-price">—</b></div>
+        <div class="metric"><label>Z-Score(50)</label><b id="m-z">—</b></div>
+        <div class="metric"><label>VWAP</label><b id="m-vwap">—</b></div>
+        <div class="metric"><label>POC</label><b id="m-poc">—</b></div>
+        <div class="metric"><label>Book imbalance</label><b id="m-imb">—</b></div>
+        <div class="metric"><label>ATR</label><b id="m-atr">—</b></div>
+        <div class="metric wide"><label>Projeção (IC 95%)</label><b id="m-fc">—</b></div>
+        <div class="metric"><label>Banca</label><b id="m-eq">—</b></div>
+        <div class="metric"><label>Posição</label><b id="m-pos">—</b></div>
+      </div>
+      <h2>Ata da reunião</h2>
+      <ol id="log" class="log"></ol>
+    </aside>
+  </main>
+  <script src="/static/office.js"></script>
+</body>
+</html>

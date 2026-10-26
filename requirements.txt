@@ -1,0 +1,11 @@
+# Runtime (pinned versions validated by the test suite)
+aiosqlite==0.22.1
+ccxt==4.5.90
+fastapi==0.162.0
+httpx==0.28.1
+numpy==2.5.4
+pandas==3.1.0
+pydantic==2.14.1
+pydantic-settings==2.16.1
+scipy==1.18.1
+uvicorn[standard]==0.54.0
