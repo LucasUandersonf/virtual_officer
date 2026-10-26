@@ -92,11 +92,11 @@ class Settings(BaseSettings):
 
     # --- LLM router -----------------------------------------------------------------
     groq_api_key: SecretStr | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     gemini_api_key: SecretStr | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-flash-latest"
     openrouter_api_key: SecretStr | None = None
-    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_model: str = "openai/gpt-oss-120b:free"
     llm_timeout_sec: float = Field(default=25.0, gt=0)
     llm_max_retries: int = Field(default=2, ge=0)
     llm_breaker_threshold: int = Field(default=3, ge=1)

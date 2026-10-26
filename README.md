@@ -110,7 +110,7 @@ São exigidos n ≥ 20, p̂ ≥ 75%, Sharpe por trade ≥ 0,2 e Kelly > 0.
 
 ## 5. Roteador de LLMs
 
-As cadeias são `Groq (llama-3.3-70b-versatile) → Gemini (gemini-2.5-flash) → OpenRouter (llama-3.3-70b:free)`. Todos usam endpoints compatíveis com OpenAI.
+As cadeias são `Groq (openai/gpt-oss-120b) → Gemini (gemini-flash-latest) → OpenRouter (openai/gpt-oss-120b:free)`. Todos usam endpoints compatíveis com OpenAI.
 
 * retries com backoff exponencial e jitter em 429/5xx/timeout, respeitando `Retry-After`;
 * circuit breaker por provedor (3 falhas → 120s fora, depois meio-aberto);

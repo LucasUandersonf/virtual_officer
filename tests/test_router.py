@@ -3,7 +3,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from mqmas.llm.router import LLMRouter, LLMUnavailableError, ProviderConfig, extract_json
+from mqmas.config import Settings
+from mqmas.llm.router import LLMRouter, LLMUnavailableError, ProviderConfig, build_providers, extract_json
 from mqmas.models import ExecutionOpinion, Vote
 
 
@@ -74,3 +75,27 @@ async def test_retry_then_success():
 
     res = await _router(handler, retries=1).complete("s", "u")
     assert res.provider == "groq" and res.content == "olá" and n["i"] == 2
+
+
+def test_reasoning_models_get_low_effort_and_token_headroom(tmp_path):
+    s = Settings(_env_file=None, db_path=tmp_path / "t.db", groq_api_key="g", gemini_api_key="k",
+                 openrouter_api_key="o", openrouter_model="meta-llama/llama-3.3-70b-instruct:free")
+    groq, gemini, openrouter = build_providers(s)
+    assert groq.extra_body == {"reasoning_effort": "low"} and groq.reasoning_headroom > 0
+    assert gemini.extra_body == {"reasoning_effort": "low"}
+    assert openrouter.extra_body == {} and openrouter.reasoning_headroom == 0
+
+
+async def test_request_body_carries_reasoning_params():
+    seen: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json
+        seen.update(json.loads(req.content))
+        return _ok("ok")
+
+    p = ProviderConfig("groq", "https://groq.test", "k", "openai/gpt-oss-120b",
+                       extra_body={"reasoning_effort": "low"}, reasoning_headroom=1024)
+    r = LLMRouter([p], client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    await r.complete("s", "u", max_tokens=160)
+    assert seen["reasoning_effort"] == "low" and seen["max_tokens"] == 160 + 1024

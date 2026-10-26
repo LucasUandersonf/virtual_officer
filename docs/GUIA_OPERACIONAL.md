@@ -64,18 +64,43 @@ Dica: no Railway, em **Workspace → Usage**, defina um *usage limit* (ex.: US$ 
 
 O sistema já está rodando em modo **paper**: usa o preço e o livro de ofertas **reais** da Binance, mas as ordens são simuladas. Nenhum centavo seu é usado.
 
-### 3.1 Falta uma coisa: a chave de IA
+### 3.1 Falta uma coisa: as chaves de IA
 
-Hoje os agentes se abstêm em todo debate porque não há chave de IA configurada (o log mostra `no LLM API key configured`). Para ligar:
+Sem chave de IA, os agentes se abstêm em todo debate (o log mostra `no LLM API key configured`) e o sistema não opera, nem em simulação. Basta **uma** chave para funcionar; as outras duas são reservas para quando a primeira atingir o limite grátis ou cair.
 
-1. Crie uma conta gratuita em <https://console.groq.com> e gere uma chave em **API Keys**.
-2. No Railway: projeto `virtual_officer` → serviço `mq-mas` → aba **Variables** → **New Variable**:
-   - Nome: `GROQ_API_KEY`
-   - Valor: a chave que começa com `gsk_`
-3. Salve. O Railway faz o redeploy sozinho.
-4. (Opcional, recomendado) Adicione também uma chave reserva:
-   - `GEMINI_API_KEY`, gratuita em <https://aistudio.google.com/apikey>
-   - `OPENROUTER_API_KEY`, gratuita em <https://openrouter.ai/keys>
+| Ordem | Provedor | Site para criar a chave | Variável no Railway | Formato da chave | Modelo (já configurado) |
+|---|---|---|---|---|---|
+| 1ª (principal) | **Groq** | <https://console.groq.com/keys> | `GROQ_API_KEY` | começa com `gsk_` | `openai/gpt-oss-120b` |
+| 2ª (reserva) | **Google Gemini** | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` | começa com `AIza` | `gemini-flash-latest` |
+| 3ª (reserva) | **OpenRouter** | <https://openrouter.ai/settings/keys> | `OPENROUTER_API_KEY` | começa com `sk-or-` | `openai/gpt-oss-120b:free` |
+
+Nenhum dos três pede cartão de crédito para o plano gratuito.
+
+**Groq (obrigatório)**
+1. Acesse <https://console.groq.com> e entre com Google ou e-mail.
+2. Menu **API Keys** → **Create API Key** → nome `mq-mas` → **Submit**.
+3. Copie a chave (`gsk_...`). Ela aparece **uma única vez**.
+
+**Google Gemini (recomendado)**
+1. Acesse <https://aistudio.google.com/apikey> com sua conta Google e aceite os termos.
+2. **Create API key** → escolha ou crie um projeto (ex.: `mq-mas`) → copie a chave (`AIza...`).
+3. Não ative faturamento (*billing*): sem ele, a chave fica no plano gratuito e nunca gera cobrança.
+4. Em **Rate limits** (no próprio AI Studio) você vê quais modelos Flash estão gratuitos e os limites do seu projeto.
+
+**OpenRouter (opcional)**
+1. Acesse <https://openrouter.ai> → **Sign in**.
+2. Vá em <https://openrouter.ai/settings/keys> → **Create Key** → nome `mq-mas` → copie (`sk-or-...`).
+3. Modelos `:free` têm limite de ~50 chamadas/dia. Depositar US$ 10 uma única vez sobe para ~1.000/dia (opcional; não é preciso para começar).
+
+**Colar no Railway** (para cada chave)
+1. <https://railway.com/dashboard> → projeto `virtual_officer` → serviço `mq-mas` → aba **Variables**.
+2. **New Variable** → nome (ex.: `GROQ_API_KEY`) → valor (a chave) → **Add**.
+3. Clique em **Deploy** na faixa roxa que aparece no topo. O redeploy leva ~2 minutos.
+4. Confira em **Deployments → View logs**: devem aparecer mensagens dos agentes debatendo, sem `no LLM API key configured`.
+
+> Nunca cole chaves em chats, e-mails ou no GitHub. O lugar delas é só a aba **Variables** do Railway.
+
+> Os provedores trocam modelos com frequência (o Groq desativou o `llama-3.3-70b-versatile` em 16/08/2026). Se um modelo sair do ar, basta alterar `GROQ_MODEL`, `GEMINI_MODEL` ou `OPENROUTER_MODEL` no Railway; enquanto isso, o roteador usa o próximo provedor da fila.
 
 ### 3.2 Por quanto tempo ficar em paper?
 
@@ -100,7 +125,7 @@ Só avance quando **todos** forem verdadeiros:
 
 ### 4.1 Conta e depósito
 
-1. Crie a conta em <https://www.binance.com> e conclua a **verificação de identidade (KYC)**.
+1. Crie a conta em <https://www.binance.com/pt-BR/register> (ou pelo app oficial **Binance**, na loja do seu celular) e conclua a **verificação de identidade (KYC)**.
 2. **Ative a autenticação em dois fatores (2FA)** com um app autenticador (Google Authenticator ou similar).
 3. Deposite reais via **PIX** (Carteira → Depositar → BRL).
 4. Converta para **USDT** (Comprar/Converter, ou o par `USDT/BRL`). O sistema opera **BTC/USDT** e precisa de saldo em **USDT** na **carteira Spot**.
@@ -112,7 +137,7 @@ Só avance quando **todos** forem verdadeiros:
 
 ### 4.2 Criar a chave de API
 
-Na Binance: **Perfil → Gerenciamento de API → Criar API → "Gerado pelo sistema"**. Dê um nome (ex.: `mq-mas`).
+Na Binance (<https://www.binance.com/pt-BR/my/settings/api-management>): **Perfil → Gerenciamento de API → Criar API → "Gerado pelo sistema"**. Dê um nome (ex.: `mq-mas`).
 
 Permissões, **exatamente assim**:
 
@@ -231,6 +256,9 @@ Railway → `mq-mas` → **Deployments** → **View logs**.
 | `ZSCORE_ENTRY` / `ZSCORE_PRECHECK` | `-2.0` / `-1.5` | Gatilho de entrada / de convocar debate |
 | `MIN_WIN_RATE` / `MIN_SAMPLE_SIZE` | `0.75` / `20` | Evidência mínima exigida |
 | `KELLY_FRACTION` | `0.25` | ¼ de Kelly no dimensionamento |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Modelo da IA principal |
+| `GEMINI_MODEL` | `gemini-flash-latest` | Modelo da 1ª reserva |
+| `OPENROUTER_MODEL` | `openai/gpt-oss-120b:free` | Modelo da 2ª reserva |
 | `DB_PATH` | `/data/mqmas.db` | Banco no volume persistente |
 | `RAILWAY_RUN_UID` / `PORT` | `0` / `8000` | Permissão de gravar no volume / porta do app |
 

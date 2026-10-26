@@ -57,6 +57,17 @@ class ProviderConfig:
     model: str
     supports_json_mode: bool = True
     extra_headers: dict[str, str] = field(default_factory=dict)
+    # Reasoning models (gpt-oss, Gemini 3 Flash) spend completion tokens on hidden
+    # thinking before the answer; keep it short and add headroom so a 160-token
+    # reply is not truncated to empty content.
+    extra_body: dict[str, object] = field(default_factory=dict)
+    reasoning_headroom: int = 0
+
+
+def _is_reasoning_model(model: str) -> bool:
+    m = model.lower()
+    return any(k in m for k in ("gpt-oss", "qwen3", "deepseek-r1", "gemini-3", "gemini-flash-latest",
+                                "gemini-flash-lite-latest", "gemini-2.5"))
 
 
 @dataclass
@@ -113,18 +124,26 @@ def extract_json(text: str) -> dict[str, object]:
 
 def build_providers(s: Settings) -> list[ProviderConfig]:
     providers: list[ProviderConfig] = []
+    headroom = 1024
     if s.groq_api_key:
+        r = _is_reasoning_model(s.groq_model)
         providers.append(ProviderConfig(
-            "groq", "https://api.groq.com/openai/v1", s.groq_api_key.get_secret_value(), s.groq_model))
+            "groq", "https://api.groq.com/openai/v1", s.groq_api_key.get_secret_value(), s.groq_model,
+            extra_body={"reasoning_effort": "low"} if r else {}, reasoning_headroom=headroom if r else 0))
     if s.gemini_api_key:
+        r = _is_reasoning_model(s.gemini_model)
         providers.append(ProviderConfig(
             "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-            s.gemini_api_key.get_secret_value(), s.gemini_model))
+            s.gemini_api_key.get_secret_value(), s.gemini_model,
+            extra_body={"reasoning_effort": "low"} if r else {}, reasoning_headroom=headroom if r else 0))
     if s.openrouter_api_key:
+        r = _is_reasoning_model(s.openrouter_model)
         providers.append(ProviderConfig(
             "openrouter", "https://openrouter.ai/api/v1", s.openrouter_api_key.get_secret_value(),
             s.openrouter_model, supports_json_mode=False,
-            extra_headers={"HTTP-Referer": "https://github.com/mq-mas", "X-Title": "MQ-MAS"}))
+            extra_headers={"HTTP-Referer": "https://github.com/mq-mas", "X-Title": "MQ-MAS"},
+            extra_body={"reasoning": {"effort": "low", "exclude": True}} if r else {},
+            reasoning_headroom=headroom if r else 0))
     return providers
 
 
@@ -165,7 +184,8 @@ class LLMRouter:
                          temperature: float, max_tokens: int, json_mode: bool) -> str:
         body: dict[str, object] = {
             "model": p.model, "messages": messages,
-            "temperature": temperature, "max_tokens": max_tokens,
+            "temperature": temperature, "max_tokens": max_tokens + p.reasoning_headroom,
+            **p.extra_body,
         }
         if json_mode and p.supports_json_mode:
             body["response_format"] = {"type": "json_object"}
