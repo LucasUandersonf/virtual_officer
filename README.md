@@ -153,7 +153,7 @@ Para uma demo offline, sem corretora: `MARKET_DATA_SOURCE=synthetic`.
 
 ## 8. Deploy
 
-Veja **[docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md)**.
+Veja **[docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md)** e o **[guia operacional](docs/GUIA_OPERACIONAL.md)**, que cobre custos, a passagem para a Binance e a operação do dia a dia.
 
 ## 9. Limitações conhecidas
 
