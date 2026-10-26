@@ -5,45 +5,337 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MQ-MAS Office</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/office.css">
 </head>
 <body>
+<div class="app">
+
   <header class="topbar">
-    <div class="brand">MQ-MAS <span class="sub">Micro-Quant Multi-Agent System</span></div>
-    <div class="pills">
-      <span id="pill-mode" class="pill">—</span>
-      <span id="pill-conn" class="pill pill-bad">offline</span>
-      <span id="pill-lock" class="pill" hidden>CIRCUIT BREAKER</span>
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><path d="M17 2 31 10v14L17 32 3 24V10z" fill="#7C6CFF"></path><path d="M17 2 31 10 17 18 3 10z" fill="#A99BFF"></path><path d="M17 18v14L3 24V10z" fill="#5B4BE0"></path></svg>
+      <div class="brand-text">
+        <strong>MQ-MAS</strong>
+        <span>Micro-Quant Multi-Agent System</span>
+      </div>
+    </div>
+    <nav aria-label="Seções" class="tabs">
+      <a href="#" class="tab active" aria-current="page">Escritório</a>
+      <a href="#ata" class="tab">Debates</a>
+      <a href="/api/trades" class="tab" target="_blank" rel="noopener">Trades</a>
+      <a href="/api/state" class="tab" target="_blank" rel="noopener">Risco</a>
+    </nav>
+    <div class="top-right">
+      <div class="ticker">
+        <span class="muted-sm">BTC/USDT</span>
+        <span class="mono strong" id="h-price">—</span>
+        <span class="mono small" id="h-change">—</span>
+      </div>
+      <div class="ticker">
+        <span class="muted-sm">Banca</span>
+        <span class="mono strong" id="h-equity">—</span>
+      </div>
+      <span class="pill pill-mode" id="pill-mode">—</span>
+      <span class="pill pill-lock" id="pill-lock" hidden>CIRCUIT BREAKER</span>
+      <span class="pill pill-conn off" id="pill-conn"><span class="pdot"></span><span id="conn-text">Conectando…</span></span>
     </div>
   </header>
 
   <main class="layout">
-    <section class="office-wrap">
-      <div id="office" class="office">
-        <canvas id="canvas" width="1280" height="720" aria-label="Escritório virtual dos agentes"></canvas>
-        <div id="overlay" class="overlay"></div>
+
+    <section aria-label="Escritório virtual" class="scene-card">
+      <div class="scene-head">
+        <div class="scene-title">
+          <h1>Quant Floor</h1>
+          <span class="muted-sm" id="scene-sub">4 agentes · nenhuma reunião ativa</span>
+        </div>
+        <div class="legend">
+          <span class="chip"><span class="sw" style="background: #9C8FFF"></span>Sala de Debate</span>
+          <span class="chip"><span class="sw" style="background: #3FD0AE"></span>Mesa Quant</span>
+          <span class="chip"><span class="sw" style="background: #FF8A7A"></span>Risk Vault</span>
+          <span class="chip"><span class="sw" style="background: #FBC15E"></span>Execution Pit</span>
+        </div>
       </div>
-      <div class="votes" id="votes"></div>
+
+      <div class="scroller" id="scroller">
+        <div class="stage" id="stage">
+          <div class="world" id="world">
+            <!-- ===== piso de madeira e paredes ===== -->
+            <div class="b floor" style="--x:0px;--y:0px;--w:640px;--d:440px;--h:16px;--z:-16px;--c:#E9DAC3;--cl:#BFA987;--cr:#A89272"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:-12px;--y:0px;--w:12px;--d:440px;--h:92px;--c:#F8F9FC;--cr:#E2E6EF"><span class="t"></span><span class="l"></span><span class="r" style="box-shadow: inset 0 -6px 0 #CDD3E0"></span></div>
+            <div class="b" style="--x:0px;--y:-12px;--w:640px;--d:12px;--h:92px;--c:#F8F9FC;--cl:#ECEFF5"><span class="t"></span><span class="l" style="box-shadow: inset 0 -6px 0 #D5DAE5"></span><span class="r"></span></div>
+
+            <!-- janelas -->
+            <div class="b" style="--x:-2px;--y:40px;--w:2px;--d:130px;--h:50px;--z:24px;--c:#BFD6FF;--cr:#B5D0FF"><span class="t"></span><span class="l"></span><span class="r" style="box-shadow: inset 0 0 0 3px #FFFFFF; background-image: linear-gradient(90deg, transparent 48%, #FFFFFF 48%, #FFFFFF 52%, transparent 52%), linear-gradient(160deg, rgba(255,255,255,.55) 0 18%, transparent 18% 30%, rgba(255,255,255,.35) 30% 36%, transparent 36%)"></span></div>
+            <div class="b" style="--x:-2px;--y:268px;--w:2px;--d:130px;--h:50px;--z:24px;--c:#BFD6FF;--cr:#B5D0FF"><span class="t"></span><span class="l"></span><span class="r" style="box-shadow: inset 0 0 0 3px #FFFFFF; background-image: linear-gradient(90deg, transparent 48%, #FFFFFF 48%, #FFFFFF 52%, transparent 52%), linear-gradient(160deg, rgba(255,255,255,.55) 0 18%, transparent 18% 30%, rgba(255,255,255,.35) 30% 36%, transparent 36%)"></span></div>
+
+            <!-- estante de livros -->
+            <div class="b shelf" style="--x:0px;--y:186px;--w:16px;--d:72px;--h:66px;--c:#C9A57B;--cr:#B48F63"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+
+            <!-- placa e telão -->
+            <div class="b" style="--x:60px;--y:-2px;--w:170px;--d:2px;--h:24px;--z:50px;--c:#7C6CFF;--cl:#7C6CFF"><span class="t"></span><span class="l" style="display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-weight: 800; font-size: 12px; letter-spacing: .18em; border-radius: 4px">MQ·MAS QUANT DESK</span><span class="r"></span></div>
+            <div class="b" style="--x:350px;--y:-3px;--w:230px;--d:3px;--h:58px;--z:20px;--c:#0E1322;--cl:#0E1322"><span class="t"></span><span class="l" style="padding: 6px 8px; box-sizing: border-box; box-shadow: inset 0 0 0 3px #232B42"><svg width="212" height="44" viewBox="0 0 214 44" aria-hidden="true"><polyline id="tv-line" points="0,14 14,18 26,12 40,20 54,17 66,24 80,22 92,30 106,27 120,34 132,31 146,38 158,35 172,30 186,32 200,26 214,28" fill="none" stroke="#4ADE9D" stroke-width="2"></polyline><line id="tv-vwap" x1="0" y1="22" x2="214" y2="22" stroke="#7C6CFF" stroke-width="1" stroke-dasharray="4 3"></line></svg></span><span class="r"></span></div>
+
+            <!-- ===== tapetes das zonas ===== -->
+            <div class="b rug" style="--x:28px;--y:28px;--w:262px;--d:166px;--h:2px;--c:#CFEFE6"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b rug" style="--x:318px;--y:28px;--w:294px;--d:206px;--h:2px;--c:#DDD8FF"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b rug" style="--x:28px;--y:250px;--w:262px;--d:172px;--h:2px;--c:#FFDCD6"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b rug" style="--x:318px;--y:266px;--w:294px;--d:156px;--h:2px;--c:#FFEBC6"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+
+            <div class="fl" style="--x:40px;--y:168px; font-size: 15px; font-weight: 800; color: #0F7E66; letter-spacing: .08em">MESA QUANT</div>
+            <div class="fl" style="--x:330px;--y:208px; font-size: 15px; font-weight: 800; color: #5A47E8; letter-spacing: .08em">SALA DE DEBATE</div>
+            <div class="fl" style="--x:40px;--y:396px; font-size: 15px; font-weight: 800; color: #B5372A; letter-spacing: .08em">RISK VAULT</div>
+            <div class="fl" style="--x:330px;--y:396px; font-size: 15px; font-weight: 800; color: #99600D; letter-spacing: .08em">EXECUTION PIT</div>
+            <div class="fl" style="--x:268px;--y:214px"><div style="width: 56px; height: 56px; border-radius: 50%; background: #7C6CFF; box-shadow: 0 0 0 4px rgba(255,255,255,.7); display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-weight: 800; font-size: 16px">MQ</div></div>
+
+            <!-- planta do fundo -->
+            <div class="b" style="--x:294px;--y:10px;--w:18px;--d:18px;--h:16px;--c:#E9E4DC"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:293px;--y:9px;--w:20px;--d:20px;--h:3px;--z:15px;--c:#F5F2EC;--c2:#5B3A1E"><span class="t" style="background: #5B3A1E; box-shadow: inset 0 0 0 2px #F5F2EC"></span><span class="l"></span><span class="r"></span></div>
+            <div class="a" style="--x:303px;--y:19px;--z:18px"><span class="lf" style="left: -20px; top: -32px; transform: rotate(-48deg)"></span><span class="lf lt" style="left: -14px; top: -40px; transform: rotate(-22deg)"></span><span class="lf" style="left: -6px; top: -44px"></span><span class="lf lt" style="left: 2px; top: -40px; transform: rotate(22deg)"></span><span class="lf" style="left: 8px; top: -32px; transform: rotate(48deg)"></span><span class="lf lt" style="left: -6px; top: -30px; transform: rotate(6deg)"></span></div>
+
+            <!-- ===== Mesa Quant: mesa da Ada ===== -->
+            <div class="shd" style="--x:56px;--y:52px;--w:104px;--d:50px"></div>
+            <div class="b" style="--x:54px;--y:50px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:151px;--y:50px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:54px;--y:91px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:151px;--y:91px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b wood" style="--x:52px;--y:48px;--w:104px;--d:48px;--h:4px;--z:22px;--c:#D9B68A"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:92px;--y:54px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:98px;--y:56px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr" style="--x:74px;--y:53px;--w:52px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b keys" style="--x:84px;--y:74px;--w:34px;--d:10px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:124px;--y:76px;--w:5px;--d:7px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t" style="border-radius: 3px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:62px;--y:70px;--w:7px;--d:7px;--h:8px;--z:26px;--c:#FFFFFF"><span class="t" style="background: #6B4226; box-shadow: inset 0 0 0 1px #FFFFFF"></span><span class="l"></span><span class="r"></span></div>
+            <!-- cadeira vazia da Ada -->
+            <div class="b" style="--x:91px;--y:110px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:99px;--y:118px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:90px;--y:108px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#B7ADFF"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:90px;--y:126px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#9C8FFF"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+
+            <i class="slot" data-slot="home-chief_quant"></i>
+            <!-- ===== mesa do Gauss ===== -->
+            <div class="shd" style="--x:180px;--y:52px;--w:104px;--d:50px"></div>
+            <div class="b" style="--x:178px;--y:50px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:275px;--y:50px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:178px;--y:91px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:275px;--y:91px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b wood" style="--x:176px;--y:48px;--w:104px;--d:48px;--h:4px;--z:22px;--c:#D9B68A"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:216px;--y:54px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:222px;--y:56px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr2" style="--x:198px;--y:53px;--w:52px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b keys" style="--x:208px;--y:74px;--w:34px;--d:10px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:248px;--y:76px;--w:5px;--d:7px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t" style="border-radius: 3px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:186px;--y:76px;--w:14px;--d:18px;--h:2px;--z:26px;--c:#FFFFFF"><span class="t" style="background-image: repeating-linear-gradient(0deg, #FFFFFF 0 2px, #DDE2EC 2px 3px)"></span><span class="l"></span><span class="r"></span></div>
+            <!-- cadeira vazia do Gauss -->
+            <div class="b" style="--x:215px;--y:110px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:223px;--y:118px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:214px;--y:108px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#93E2CE"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:214px;--y:126px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#3FC7A5"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+
+            <i class="slot" data-slot="home-econometrician"></i>
+            <!-- ===== Sala de Debate ===== -->
+            <div class="b glass" style="--x:314px;--y:28px;--w:4px;--d:206px;--h:50px"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+
+            <!-- cadeira e avatar do Gauss (atrás da mesa) -->
+            <div class="b" style="--x:452px;--y:56px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#3FC7A5"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+            <div class="b" style="--x:453px;--y:61px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:461px;--y:69px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:452px;--y:60px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#93E2CE"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <i class="slot" data-slot="meet-econometrician"></i>
+
+            <!-- cadeira e avatar da Ada -->
+            <div class="b" style="--x:362px;--y:120px;--w:4px;--d:22px;--h:22px;--z:17px;--c:#9C8FFF"><span class="t"></span><span class="l"></span><span class="r" style="border-radius: 8px 8px 2px 2px"></span></div>
+            <div class="b" style="--x:367px;--y:121px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:375px;--y:129px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:366px;--y:120px;--w:20px;--d:22px;--h:5px;--z:14px;--c:#B7ADFF"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <i class="slot" data-slot="meet-chief_quant"></i>
+
+            <!-- mesa de reunião -->
+            <div class="shd" style="--x:400px;--y:98px;--w:140px;--d:74px"></div>
+            <div class="b" style="--x:420px;--y:120px;--w:10px;--d:20px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:502px;--y:120px;--w:10px;--d:20px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:396px;--y:94px;--w:140px;--d:72px;--h:4px;--z:22px;--c:#F7F5F1;--cl:#E1DCD2;--cr:#CEC8BC"><span class="t" style="border-radius: 10px; background-image: linear-gradient(120deg, transparent 0 40%, rgba(255,255,255,.8) 40% 46%, transparent 46%)"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:420px;--y:104px;--w:6px;--d:6px;--h:7px;--z:26px;--c:#FFFFFF"><span class="t" style="background: #6B4226; box-shadow: inset 0 0 0 1px #FFFFFF"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:506px;--y:104px;--w:6px;--d:6px;--h:7px;--z:26px;--c:#E8574A"><span class="t" style="background: #6B4226; box-shadow: inset 0 0 0 1px #E8574A"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:404px;--y:132px;--w:14px;--d:10px;--h:1px;--z:26px;--c:#FFFFFF"><span class="t" style="background-image: repeating-linear-gradient(0deg, #FFFFFF 0 2px, #DDE2EC 2px 3px)"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:460px;--y:114px;--w:18px;--d:18px;--h:3px;--z:26px;--c:#7C6CFF"><span class="t" style="border-radius: 50%; box-shadow: 0 0 10px #A99BFF"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:448px;--y:144px;--w:24px;--d:2px;--h:15px;--z:28px;--c:#C9CED8;--cl:#1A1F2E"><span class="t"></span><span class="l" style="box-shadow: inset 0 0 0 2px #C9CED8; background-image: linear-gradient(transparent 55%, rgba(74,222,157,.8) 55% 60%, transparent 60%)"></span><span class="r"></span></div>
+            <div class="b" style="--x:448px;--y:146px;--w:24px;--d:14px;--h:2px;--z:26px;--c:#D3D8E2"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:510px;--y:118px;--w:2px;--d:24px;--h:15px;--z:28px;--c:#C9CED8;--cr:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r" style="box-shadow: inset 0 0 0 2px #C9CED8; background-image: repeating-linear-gradient(90deg, #22B07D 0 2px, transparent 2px 5px)"></span></div>
+            <div class="b" style="--x:512px;--y:118px;--w:14px;--d:24px;--h:2px;--z:26px;--c:#D3D8E2"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="a" style="--x:469px;--y:123px;--z:32px"><div style="position: absolute; left: -15px; top: -34px; width: 30px; height: 30px; border-radius: 50%; background: rgba(124,108,255,.16); box-shadow: 0 0 22px rgba(124,108,255,.65); display: flex; align-items: center; justify-content: center; color: #6C5CE7; font-weight: 800; font-size: 17px; animation: holo 2.4s ease-in-out infinite">₿</div></div>
+
+            <!-- cadeira e avatar da Vera (frente) -->
+            <div class="b" style="--x:458px;--y:168px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#FF8A7A"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+            <div class="b" style="--x:459px;--y:173px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:467px;--y:181px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:458px;--y:172px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#FFB3A8"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <i class="slot" data-slot="meet-cro"></i>
+
+            <!-- cadeira e avatar do Hex (frente direita) -->
+            <div class="b" style="--x:566px;--y:120px;--w:4px;--d:22px;--h:22px;--z:17px;--c:#F5B544"><span class="t"></span><span class="l"></span><span class="r" style="border-radius: 8px 8px 2px 2px"></span></div>
+            <div class="b" style="--x:546px;--y:121px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:554px;--y:129px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:546px;--y:120px;--w:20px;--d:22px;--h:5px;--z:14px;--c:#FFD88F"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <i class="slot" data-slot="meet-execution"></i>
+
+            <!-- divisórias de vidro da frente (com porta) -->
+            <div class="b glass" style="--x:318px;--y:232px;--w:110px;--d:4px;--h:50px"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b glass" style="--x:486px;--y:232px;--w:126px;--d:4px;--h:50px"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+
+            <!-- planta da parede esquerda -->
+            <div class="b" style="--x:22px;--y:264px;--w:18px;--d:18px;--h:16px;--c:#E9E4DC"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:21px;--y:263px;--w:20px;--d:20px;--h:3px;--z:15px;--c:#F5F2EC"><span class="t" style="background: #5B3A1E; box-shadow: inset 0 0 0 2px #F5F2EC"></span><span class="l"></span><span class="r"></span></div>
+            <div class="a" style="--x:31px;--y:273px;--z:18px"><span class="lf" style="left: -20px; top: -32px; transform: rotate(-48deg)"></span><span class="lf lt" style="left: -14px; top: -40px; transform: rotate(-22deg)"></span><span class="lf" style="left: -6px; top: -44px"></span><span class="lf lt" style="left: 2px; top: -40px; transform: rotate(22deg)"></span><span class="lf" style="left: 8px; top: -32px; transform: rotate(48deg)"></span><span class="lf lt" style="left: -6px; top: -30px; transform: rotate(6deg)"></span></div>
+
+            <!-- ===== Risk Vault ===== -->
+            <div class="shd" style="--x:60px;--y:290px;--w:112px;--d:50px"></div>
+            <div class="b" style="--x:58px;--y:288px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:163px;--y:288px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:58px;--y:329px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:163px;--y:329px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b wood" style="--x:56px;--y:286px;--w:112px;--d:48px;--h:4px;--z:22px;--c:#D9B68A"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:102px;--y:292px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:108px;--y:294px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr2" style="--x:84px;--y:291px;--w:52px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b keys" style="--x:94px;--y:312px;--w:34px;--d:10px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:70px;--y:310px;--w:7px;--d:7px;--h:8px;--z:26px;--c:#FFFFFF"><span class="t" style="background: #6B4226; box-shadow: inset 0 0 0 1px #FFFFFF"></span><span class="l"></span><span class="r"></span></div>
+            <div class="shd" style="--x:202px;--y:282px;--w:54px;--d:48px"></div>
+            <div class="b" style="--x:198px;--y:278px;--w:54px;--d:48px;--h:62px;--c:#3A4566;--cl:#2E3756;--cr:#232B46"><span class="t" style="box-shadow: inset 0 0 0 3px #4A567C"></span><span class="l" style="display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: inset 0 0 0 3px #4A567C"><span style="width: 24px; height: 24px; border-radius: 50%; border: 3px solid #B3BDDB; box-sizing: border-box; display: flex; align-items: center; justify-content: center"><span style="width: 6px; height: 6px; border-radius: 50%; background: #B3BDDB"></span></span><span style="width: 4px; height: 20px; border-radius: 3px; background: #B3BDDB"></span></span><span class="r"></span></div>
+            <!-- cadeira vazia da Vera -->
+            <div class="b" style="--x:101px;--y:348px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:109px;--y:356px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:100px;--y:346px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#FFB3A8"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:100px;--y:364px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#FF8A7A"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+
+            <i class="slot" data-slot="home-cro"></i>
+            <!-- ===== Execution Pit ===== -->
+            <div class="b rack" style="--x:584px;--y:278px;--w:28px;--d:40px;--h:76px;--c:#1E2538;--cl:#1A2133;--cr:#141A2A"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="shd" style="--x:350px;--y:302px;--w:208px;--d:48px"></div>
+            <div class="b" style="--x:348px;--y:300px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:549px;--y:300px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:348px;--y:339px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:549px;--y:339px;--w:3px;--d:3px;--h:22px;--c:#3A3F52"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b wood" style="--x:346px;--y:298px;--w:208px;--d:46px;--h:4px;--z:22px;--c:#D9B68A"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:382px;--y:304px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:440px;--y:304px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:498px;--y:304px;--w:16px;--d:8px;--h:2px;--z:26px;--c:#2B3145"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:388px;--y:306px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:446px;--y:306px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:504px;--y:306px;--w:3px;--d:3px;--h:10px;--z:28px;--c:#8A93A8"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr2" style="--x:366px;--y:303px;--w:48px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr" style="--x:424px;--y:303px;--w:48px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b scr2" style="--x:482px;--y:303px;--w:48px;--d:3px;--h:30px;--z:36px;--c:#1A1F2E"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b keys" style="--x:420px;--y:322px;--w:34px;--d:10px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:460px;--y:324px;--w:5px;--d:7px;--h:2px;--z:26px;--c:#EDEFF4"><span class="t" style="border-radius: 3px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:372px;--y:322px;--w:7px;--d:7px;--h:8px;--z:26px;--c:#2B3145"><span class="t" style="background: #6B4226; box-shadow: inset 0 0 0 1px #2B3145"></span><span class="l"></span><span class="r"></span></div>
+            <!-- cadeira vazia do Hex -->
+            <div class="b" style="--x:441px;--y:362px;--w:20px;--d:20px;--h:3px;--c:#2B3145"><span class="t" style="border-radius: 50%"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:449px;--y:370px;--w:4px;--d:4px;--h:11px;--z:3px;--c:#9AA2B5"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:440px;--y:360px;--w:22px;--d:20px;--h:5px;--z:14px;--c:#FFD88F"><span class="t" style="border-radius: 5px"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:440px;--y:378px;--w:22px;--d:4px;--h:22px;--z:17px;--c:#F5B544"><span class="t"></span><span class="l" style="border-radius: 8px 8px 2px 2px"></span><span class="r"></span></div>
+
+            <i class="slot" data-slot="home-execution"></i>
+            <!-- plantas da frente -->
+            <div class="b" style="--x:296px;--y:404px;--w:18px;--d:18px;--h:16px;--c:#E9E4DC"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:295px;--y:403px;--w:20px;--d:20px;--h:3px;--z:15px;--c:#F5F2EC"><span class="t" style="background: #5B3A1E; box-shadow: inset 0 0 0 2px #F5F2EC"></span><span class="l"></span><span class="r"></span></div>
+            <div class="a" style="--x:305px;--y:413px;--z:18px"><span class="lf" style="left: -20px; top: -32px; transform: rotate(-48deg)"></span><span class="lf lt" style="left: -14px; top: -40px; transform: rotate(-22deg)"></span><span class="lf" style="left: -6px; top: -44px"></span><span class="lf lt" style="left: 2px; top: -40px; transform: rotate(22deg)"></span><span class="lf" style="left: 8px; top: -32px; transform: rotate(48deg)"></span><span class="lf lt" style="left: -6px; top: -30px; transform: rotate(6deg)"></span></div>
+            <div class="b" style="--x:614px;--y:238px;--w:18px;--d:18px;--h:16px;--c:#E9E4DC"><span class="t"></span><span class="l"></span><span class="r"></span></div>
+            <div class="b" style="--x:613px;--y:237px;--w:20px;--d:20px;--h:3px;--z:15px;--c:#F5F2EC"><span class="t" style="background: #5B3A1E; box-shadow: inset 0 0 0 2px #F5F2EC"></span><span class="l"></span><span class="r"></span></div>
+            <div class="a" style="--x:623px;--y:247px;--z:18px"><span class="lf" style="left: -20px; top: -32px; transform: rotate(-48deg)"></span><span class="lf lt" style="left: -14px; top: -40px; transform: rotate(-22deg)"></span><span class="lf" style="left: -6px; top: -44px"></span><span class="lf lt" style="left: 2px; top: -40px; transform: rotate(22deg)"></span><span class="lf" style="left: 8px; top: -32px; transform: rotate(48deg)"></span><span class="lf lt" style="left: -6px; top: -30px; transform: rotate(6deg)"></span></div>
+
+            
+            <div id="overlay-layer"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="debate-card" id="debate-card">
+        <div class="dc-head">
+          <span class="live-dot" id="dc-dot"></span>
+          <strong id="dc-title">Sem debate ativo</strong>
+          <span class="mono muted-sm dc-timer" id="dc-timer">—</span>
+        </div>
+        <div class="dc-rows" id="dc-rows"></div>
+        <div class="dc-bar" id="dc-bar"></div>
+        <span class="muted-xs" id="dc-foot">Aguardando o pré-filtro estatístico</span>
+      </div>
+
+      <div class="dock">
+        <button type="button" class="dock-btn" id="zoom-out" aria-label="Diminuir zoom"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+        <span class="mono zoom-label" id="zoom-label">100%</span>
+        <button type="button" class="dock-btn" id="zoom-in" aria-label="Aumentar zoom"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M12 5v14"></path></svg></button>
+        <span class="dock-sep"></span>
+        <button type="button" class="dock-primary" id="follow" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>Seguir debate</button>
+        <button type="button" class="dock-danger" id="kill"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path></svg><span id="kill-text">Kill switch</span></button>
+      </div>
     </section>
 
-    <aside class="panel">
-      <h2>Telemetria</h2>
-      <div class="grid" id="metrics">
-        <div class="metric"><label>BTC/USDT</label><b id="m-price">—</b></div>
-        <div class="metric"><label>Z-Score(50)</label><b id="m-z">—</b></div>
-        <div class="metric"><label>VWAP</label><b id="m-vwap">—</b></div>
-        <div class="metric"><label>POC</label><b id="m-poc">—</b></div>
-        <div class="metric"><label>Book imbalance</label><b id="m-imb">—</b></div>
-        <div class="metric"><label>ATR</label><b id="m-atr">—</b></div>
-        <div class="metric wide"><label>Projeção (IC 95%)</label><b id="m-fc">—</b></div>
-        <div class="metric"><label>Banca</label><b id="m-eq">—</b></div>
-        <div class="metric"><label>Posição</label><b id="m-pos">—</b></div>
-      </div>
-      <h2>Ata da reunião</h2>
-      <ol id="log" class="log"></ol>
+    <aside aria-label="Painel" class="side">
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Telemetria</h2>
+          <span class="muted-xs" id="t-age">aguardando dados</span>
+        </div>
+        <div class="tgrid">
+          <div class="tile">
+            <span class="muted-sm">Z-Score (50)</span>
+            <strong class="mono big" id="t-z">—</strong>
+            <div class="gauge"><span class="gauge-tick"></span><span class="gauge-dot" id="t-z-dot"></span></div>
+          </div>
+          <div class="tile">
+            <span class="muted-sm">Book imbalance</span>
+            <strong class="mono big" id="t-imb">—</strong>
+            <div class="split"><span class="split-bid" id="t-imb-bid"></span><span class="split-ask" id="t-imb-ask"></span></div>
+          </div>
+          <div class="tile tight">
+            <span class="muted-sm">VWAP</span>
+            <strong class="mono mid" id="t-vwap">—</strong>
+            <span class="muted-xs" id="t-vwap-sub">—</span>
+          </div>
+          <div class="tile tight">
+            <span class="muted-sm">POC · Value Area</span>
+            <strong class="mono mid" id="t-poc">—</strong>
+            <span class="muted-xs" id="t-va">—</span>
+          </div>
+        </div>
+        <div class="tile">
+          <div class="row-between"><span class="muted-sm" id="t-fc-label">Projeção · IC 95%</span><strong class="mono" id="t-fc">—</strong></div>
+          <div class="ci">
+            <span class="ci-axis"></span>
+            <span class="ci-band" id="t-ci-band"></span>
+            <span class="ci-mark" id="t-ci-mark"></span>
+            <span class="ci-price" id="t-ci-price" title="Preço atual"></span>
+          </div>
+          <div class="row-between mono muted-xs"><span id="t-ci-lo">—</span><span id="t-ci-hi">—</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Plano da ordem</h2>
+          <span class="muted-xs" id="p-status">aguardando setup</span>
+        </div>
+        <div class="plan">
+          <span class="muted-sm">LIMIT BUY</span><span class="mono right" id="p-qty">—</span>
+          <span class="muted-sm">Preço limite</span><span class="mono right" id="p-limit">—</span>
+          <span class="muted-sm" id="p-stop-label">Stop</span><span class="mono right neg" id="p-stop">—</span>
+          <span class="muted-sm" id="p-tp-label">Take profit</span><span class="mono right pos" id="p-tp">—</span>
+          <span class="muted-sm">Risco máximo</span><span class="mono right" id="p-risk">—</span>
+        </div>
+      </section>
+
+      <section class="card" id="ata">
+        <div class="card-head">
+          <h2>Ata do debate</h2>
+          <a href="/api/debates" target="_blank" rel="noopener" class="link-sm">Ver histórico</a>
+        </div>
+        <ol class="ata" id="ata-list"></ol>
+      </section>
     </aside>
   </main>
-  <script src="/static/office.js"></script>
+</div>
+<script src="/static/office.js"></script>
 </body>
 </html>
