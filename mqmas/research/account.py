@@ -65,3 +65,75 @@ def summarize(rep: dict[str, Any]) -> list[str]:
                      f"lucro US${r['lucro_usd']:+.2f} ({r['retorno_total']:+.1%}, {r['cagr']:+.1%}/ano) "
                      f"DD {r['max_dd']:.1%} | MC ano negativo {r['prob_ano_negativo']:.0%} DD95 {r['dd_p95_mc']:.1%}")
     return lines
+
+
+# ---------------------------------------------------------------------- swing book (several setups, one account)
+
+SWING_VERSION = 1
+# The three families with PF ≥ 1.7 out of sample and ≥ 1.6 with doubled costs in the lab report. They were
+# picked after seeing that report, so this test checks how they combine, not whether they are real.
+SWING_MEMBERS = ("confluence|1d", "breakout|1d", "tpl:golden_cross|4h")
+SWING_ACCOUNTS = {"US$50 risco 1,5% até 3 posições": RiskRules(equity0=50.0, risk_per_trade=0.015, max_positions=3),
+                  "US$50 risco 1,5% até 5 posições": RiskRules(equity0=50.0, risk_per_trade=0.015, max_positions=5),
+                  "US$50 risco 1,0% até 5 posições": RiskRules(equity0=50.0, risk_per_trade=0.01, max_positions=5),
+                  "US$120 risco 1,0% até 5 posições": RiskRules(equity0=120.0, risk_per_trade=0.01, max_positions=5)}
+
+
+def _account_row(trades: pd.DataFrame, rules: RiskRules, costs: Costs, end: pd.Timestamp) -> dict[str, Any]:
+    res = simulate_portfolio(trades, rules, costs, FIRST_TEST, end)
+    m = res.metrics
+    weeks = max((end - FIRST_TEST).days / 7, 1e-9)
+    mc = monte_carlo(equity_monthly(res.equity, rules.equity0, end))
+    return {"trades": int(m["trades"]), "por_semana": round(m["trades"] / weeks, 2), "pulados": res.skipped,
+            "acerto": round(m["win_rate"], 3), "pf": round(m["profit_factor"], 2),
+            "lucro_usd": round(m["total_return"] * rules.equity0, 2), "cagr": round(m["cagr"], 4),
+            "max_dd": round(m["max_drawdown"], 4), "prob_ano_negativo": round(mc.get("prob_losing_year", 0.0), 3),
+            "dd_p95_mc": round(mc.get("dd_p95", 0.0), 3)}
+
+
+def run_swing(root: Path, ex: Any = None) -> dict[str, Any]:
+    from mqmas.research.strategies import build_configs
+
+    out: dict[str, Any] = {"version": SWING_VERSION, "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+                           "membros": list(SWING_MEMBERS), "universos": {}}
+    for top_n in (15, 30):
+        lab = Lab(root, top_n=top_n)
+        lab.load(ex)
+        configs = [c for c in build_configs() if f"{c.family}|{c.tf}" in SWING_MEMBERS]
+        table = lab.bracket_trade_table(configs)
+        groups: dict[str, list[str]] = {}
+        for c in configs:
+            groups.setdefault(f"{c.family}|{c.tf}", []).append(c.key)
+        tpl_table, tpl_groups = lab.template_trade_table()
+        table.update(tpl_table)
+        groups.update({k: v for k, v in tpl_groups.items() if k in SWING_MEMBERS})
+        wf = lab.walk_forward(groups, table)
+        parts = {n: wf[n]["oos_trades"].assign(setup=n) for n in SWING_MEMBERS
+                 if n in wf and wf[n]["oos_trades"] is not None}
+        ens = pd.concat(parts.values(), ignore_index=True)
+        stressed = ens.assign(ret=ens["ret"] - lab.costs.round_trip)
+        big = RiskRules(equity0=10_000.0, risk_per_trade=0.01, max_positions=5)
+        out["universos"][f"top{top_n}"] = {
+            "periodo": f"{FIRST_TEST.date()} → {lab.end.date()}",
+            "membros": {n: _account_row(t, big, lab.costs, lab.end) for n, t in parts.items()},
+            "carteira_custo_dobrado": _account_row(stressed, big, lab.costs, lab.end),
+            "contas": {label: _account_row(ens, rules, lab.costs, lab.end) for label, rules in SWING_ACCOUNTS.items()}}
+        log.info("swing book: top%d done", top_n)
+    return out
+
+
+def summarize_swing(rep: dict[str, Any]) -> list[str]:
+    lines = [f"SWINGBOOK v{rep['version']} | membros {', '.join(rep['membros'])}"]
+
+    def fmt(r: dict[str, Any]) -> str:
+        return (f"n={r['trades']} ({r['por_semana']}/sem) pulados={r['pulados']} acerto {r['acerto']:.0%} PF {r['pf']} "
+                f"lucro US${r['lucro_usd']:+.2f} ({r['cagr']:+.1%}/ano) DD {r['max_dd']:.1%} | MC ano negativo "
+                f"{r['prob_ano_negativo']:.0%} DD95 {r['dd_p95_mc']:.1%}")
+
+    for uni, u in rep["universos"].items():
+        lines.append(f"SWINGBOOK {uni} {u['periodo']} | custo dobrado: {fmt(u['carteira_custo_dobrado'])}")
+        for n, r in u["membros"].items():
+            lines.append(f"SWINGBOOK {uni} membro {n}: {fmt(r)}")
+        for label, r in u["contas"].items():
+            lines.append(f"SWINGBOOK {uni} {label}: {fmt(r)}")
+    return lines
