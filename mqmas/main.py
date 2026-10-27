@@ -107,6 +107,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if notifier.enabled:
         await notifier.send(f"MQ-MAS iniciado em modo {s.trading_mode.value}"
                             + (" · carteira com ORDENS REAIS" if s.is_live and s.book_live_enabled else ""))
+    if s.review_on_boot:
+        tasks.append(asyncio.create_task(_review_once(s, db, router), name="review_on_boot"))
     runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, book, stop, tasks)
     tasks.append(asyncio.create_task(_sync_library(s, db), name="pattern_library"))
     if s.research_on_boot:
@@ -139,6 +141,26 @@ async def _sync_library(s: Settings, db: Database) -> None:
         await db.sync_pattern_library(await asyncio.to_thread(catalog), stats_rows(study))
     except Exception:
         log.exception("pattern library sync failed")
+
+
+async def _review_once(s: Settings, db: Database, router: LLMRouter) -> None:
+    """REVIEW_ON_BOOT: the team debates a trade report once; facts and opinions go to the log and the office."""
+    from mqmas.agents.review import TradeReport, debate
+    from mqmas.ta.live import load_study
+
+    await asyncio.sleep(20)
+    try:
+        rep = TradeReport.model_validate_json(s.review_on_boot or "{}")
+        res = await debate(router, rep, load_study(_research_root(s)))
+        for m in res.pop("messages"):
+            await db.save_message(m)
+            await hub.publish("agent_message", m.model_dump(mode="json"))
+        log.info("REVIEW fatos %s", json.dumps(res["fatos"], ensure_ascii=False))
+        log.info("REVIEW evidencia %s", json.dumps(res["evidencia"], ensure_ascii=False))
+        for d in res["debate"]:
+            log.info("REVIEW %s", json.dumps(d, ensure_ascii=False))
+    except Exception:
+        log.exception("review on boot failed")
 
 
 async def _research_once(s: Settings, db: Database) -> None:
