@@ -33,13 +33,19 @@ from mqmas.execution.spot import Fill, OrderRefused, SpotExecutor, client_id
 from mqmas.persistence.db import Database
 from mqmas.research.data import is_crypto
 from mqmas.trend.committee import Committee
-from mqmas.trend.model import CRASH_STOP_ATR, TrendParams, atr, weights_frame
+from mqmas.trend.model import CRASH_STOP_ATR, TrendParams, atr, momentum_frame, weights_frame
 from mqmas.trend.rebalance import MIN_ORDER_USDT, Order, next_stop, plan_orders
 from mqmas.trend.specialists import Proposal
 
 log = logging.getLogger(__name__)
 
 STATE_KEY = "trend:state"
+DESKS = {"tendencia": "Gestor de tendência", "ondas": "Caçador de ondas"}
+STRATEGY_TEXT = {
+    "tendencia": "tendência: 9 canais Donchian, tamanho por volatilidade (validada 2020–2026)",
+    "ondas": "caçador de ondas: as 5 moedas com maior alta em 3 semanas, troca semanal, só com BTC acima da "
+             "média de 100 dias (validada 2020–2026, queda máxima histórica de 67%)",
+}
 DAY_MS = 86_400_000
 HOUR_MS = 3_600_000
 DAILY_BARS = 1000  # 360-day channel + 365 days of history for eligibility
@@ -93,26 +99,36 @@ def closed_day(now_ms: int) -> str:
 
 class TrendAllocator:
     def __init__(self, settings: Settings, db: Database, exchange: Any, notify: Notify | None = None,
-                 committee: Committee | None = None) -> None:
+                 committee: Committee | None = None, desk: str = "tendencia") -> None:
+        if desk not in DESKS:
+            raise ValueError(f"desk desconhecido: {desk}")
         self._s = settings
         self.committee = committee
+        self.desk = desk
+        self.capital = settings.trend_capital_usdt if desk == "tendencia" else settings.ondas_capital_usdt
+        self.max_drawdown = settings.trend_max_drawdown if desk == "tendencia" else settings.ondas_max_drawdown
         self._db = db
         self._ex = exchange
         self._notify = notify
         self.live = settings.is_live and settings.trend_live_enabled
         self._spot = SpotExecutor(exchange, settings.fee_rate)
         self.params = TrendParams(settings.trend_vol_target, settings.trend_top_n, settings.trend_max_weight)
-        self.state = TrendState(cash=settings.trend_capital_usdt, peak=settings.trend_capital_usdt)
+        self.state = TrendState(cash=self.capital, peak=self.capital)
         self.notes: list[str] = []
 
     @property
     def mode(self) -> str:
         return "live" if self.live else "paper"
 
+    @property
+    def state_key(self) -> str:
+        # the trend desk keeps its original key, so existing paper/live state carries over
+        return f"{STATE_KEY}:{self.mode}" if self.desk == "tendencia" else f"{self.desk}:state:{self.mode}"
+
     # ------------------------------------------------------------------ state
 
     async def load(self) -> TrendState:
-        raw = await self._db.get_kv(f"{STATE_KEY}:{self.mode}")
+        raw = await self._db.get_kv(self.state_key)
         if raw:
             self.state = TrendState.from_json(raw)
         return self.state
@@ -121,7 +137,7 @@ class TrendAllocator:
         st = self.state
         st.trips = st.trips[-KEEP_TRIPS:]
         st.equity_log = st.equity_log[-KEEP_EQUITY:]
-        await self._db.set_kv(f"{STATE_KEY}:{self.mode}", st.to_json())
+        await self._db.set_kv(self.state_key, st.to_json())
 
     def _note(self, text: str) -> None:
         log.info("trend: %s", text)
@@ -312,7 +328,7 @@ class TrendAllocator:
         if btc is None or btc.index[-1].date().isoformat() != day:
             self._note(f"candle diário de {day} ainda não publicado: rebalanceamento adiado")
             return False
-        w, sig = weights_frame(daily, self.params)
+        w, sig = weights_frame(daily, self.params) if self.desk == "tendencia" else momentum_frame(daily)
         last_w, last_sig = w.iloc[-1], sig.iloc[-1]
         for sym in list(st.blocked):  # a fresh breakout (stronger signal) lifts the block
             s = float(last_sig.get(sym, 0.0) or 0.0)
@@ -353,7 +369,7 @@ class TrendAllocator:
         if not buys or equity <= 0:
             return orders
         props = [Proposal(s, st.targets[s], values.get(s, 0.0) / equity, st.signals.get(s, 0.0), px[s]["last"],
-                          daily[s]) for s in buys if s in daily]
+                          daily[s], STRATEGY_TEXT[self.desk]) for s in buys if s in daily]
         reviews = await self.committee.review(day, props)
         st.reviews = {s: {"proposto": r.proposed, "final": round(r.final, 4),
                           "pareceres": [{"especialista": o.specialist, "voto": o.verdict, "motivo": o.reason}
@@ -402,7 +418,7 @@ class TrendAllocator:
             await self.liquidate("kill_switch")
             st.halted = "kill_switch"
             self._note("KILL SWITCH: tudo vendido, alocador parado")
-        elif dd >= self._s.trend_max_drawdown and not st.halted:
+        elif dd >= self.max_drawdown and not st.halted:
             await self.liquidate("max_drawdown")
             st.halted = f"max_drawdown {dd:.1%}"
             self._note(f"queda de {dd:.1%} desde o pico: tudo vendido, alocador parado até reset manual")
@@ -423,15 +439,15 @@ class TrendAllocator:
 
     def report(self, equity: float) -> dict[str, Any]:
         st = self.state
-        return {"mode": self.mode, "equity": round(equity, 4), "cash": round(st.cash, 4),
-                "capital": self._s.trend_capital_usdt, "peak": round(st.peak, 4), "halted": st.halted,
+        return {"desk": self.desk, "mode": self.mode, "equity": round(equity, 4), "cash": round(st.cash, 4),
+                "capital": self.capital, "peak": round(st.peak, 4), "halted": st.halted,
                 "last_close": st.last_close, "targets": st.targets, "blocked": st.blocked,
                 "holdings": {s: {"qty": h.qty, "stop": h.stop, "stop_order": h.stop_order} for s, h in st.holdings.items()},
                 "trips": len(st.trips), "notes": self.notes}
 
     def render(self, r: dict[str, Any]) -> str:
         ret = r["equity"] / r["capital"] - 1
-        lines = [f"Alocador de tendência ({r['mode']}): banca US$ {r['equity']:.2f} ({ret:+.1%}), caixa US$ {r['cash']:.2f}"]
+        lines = [f"{DESKS[self.desk]} ({r['mode']}): banca US$ {r['equity']:.2f} ({ret:+.1%}), caixa US$ {r['cash']:.2f}"]
         if r["halted"]:
             lines.append(f"PARADO: {r['halted']}")
         lines += [f"• {n}" for n in self.notes]

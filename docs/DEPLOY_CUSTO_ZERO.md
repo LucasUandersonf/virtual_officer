@@ -1,5 +1,7 @@
 # Alocador de tendência a custo quase zero
 
+> **Atualização:** o runner agora opera dois gestores (tendência e caçador de ondas) com um comitê de especialistas. Veja **[SISTEMA.md](SISTEMA.md)** para o funcionamento completo, os resultados e a configuração recomendada (70% tendência + 30% ondas).
+
 Este guia põe no ar o **alocador de tendência** (`python -m mqmas.runner`) como um *cron job*: o processo liga uma vez por hora, roda por cerca de um minuto e desliga. O escritório virtual (o servidor web que fica ligado 24 h) continua disponível, mas é opcional.
 
 ## 1. O que é a estratégia e de onde ela veio

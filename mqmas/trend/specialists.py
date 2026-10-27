@@ -62,6 +62,7 @@ class Proposal:
     signal: float  # ensemble signal 0..1
     price: float
     daily: pd.DataFrame
+    strategy: str = "tendência: 9 canais Donchian, tamanho por volatilidade (validada 2020–2026)"
 
 
 @dataclass
@@ -268,8 +269,7 @@ class Risk:
         if not getattr(self._router, "enabled", False):
             return Opinion(self.name, ABSTAIN, "sem chave de IA: a Vera não opina (não bloqueia)")
         payload = {"ativo": p.symbol, "proposta": f"alocar {p.weight:.1%} da banca (hoje {p.current_weight:.1%})",
-                   "estrategia": "tendência: 9 canais Donchian, tamanho por volatilidade (validada 2020–2026)",
-                   "sinal_tendencia": round(p.signal, 2), "preco": p.price,
+                   "estrategia": p.strategy, "sinal": round(p.signal, 3), "preco": p.price,
                    "pareceres_da_equipe": [{"especialista": o.specialist, "voto": o.verdict, "motivo": o.reason}
                                            for o in others]}
         res = await self._cro.ask(payload, CroOpinion)

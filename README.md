@@ -156,7 +156,7 @@ Para uma demo offline, sem corretora: `MARKET_DATA_SOURCE=synthetic`.
 
 ## 8. Deploy
 
-**Caminho recomendado: o alocador de tendência como *cron job* ([docs/DEPLOY_CUSTO_ZERO.md](docs/DEPLOY_CUSTO_ZERO.md)).** `python -m mqmas.runner` roda uma vez por hora e sai, então cabe no plano gratuito do Railway. A estratégia é uma engenharia reversa de Zarattini et al. (2025): 9 canais Donchian com tamanho por volatilidade sobre as 10 moedas mais líquidas, com stop na própria Binance. No backtest de 2020-01 a 2026-10 com taxas, numa conta de US$ 120, fez CAGR de +27%, queda máxima de 33% e Sharpe de 1,07; segurar BTC fez +42%, 77% e 0,89. A pesquisa roda de graça no GitHub Actions (`.github/workflows/research.yml`).
+**Caminho recomendado: dois gestores (tendência + caçador de ondas) com comitê de especialistas, como *cron job* — veja [docs/SISTEMA.md](docs/SISTEMA.md) e [docs/DEPLOY_CUSTO_ZERO.md](docs/DEPLOY_CUSTO_ZERO.md).** `python -m mqmas.runner` roda uma vez por hora e sai, então cabe no plano gratuito do Railway. A estratégia é uma engenharia reversa de Zarattini et al. (2025): 9 canais Donchian com tamanho por volatilidade sobre as 10 moedas mais líquidas, com stop na própria Binance. No backtest de 2020-01 a 2026-10 com taxas, numa conta de US$ 120, fez CAGR de +27%, queda máxima de 33% e Sharpe de 1,07; segurar BTC fez +42%, 77% e 0,89. A pesquisa roda de graça no GitHub Actions (`.github/workflows/research.yml`).
 
 O escritório virtual (servidor 24 h) continua disponível: veja **[docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md)** e o **[guia operacional](docs/GUIA_OPERACIONAL.md)**, que cobre custos, a passagem para a Binance e a operação do dia a dia.
 

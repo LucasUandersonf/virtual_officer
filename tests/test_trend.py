@@ -209,7 +209,7 @@ async def test_kill_switch_and_drawdown_halt_sell_everything(trend_settings):
     assert rep["halted"].startswith("max_drawdown") and not rep["holdings"]
     await db.close()
     status = await runner_run(["--reset-halt"], fresh, ex)
-    assert status["halted"] is None
+    assert status["tendencia"]["halted"] is None
 
 
 @pytest.mark.asyncio
@@ -323,3 +323,32 @@ def test_event_study_measures_what_follows_a_big_day():
     assert ev["+20%"]["eventos"] == 5
     assert ev["+20%"]["5d"]["media"] == pytest.approx(0.10)
     assert ev["+20%"]["1d"]["media"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_wave_hunter_desk_holds_the_strongest_coins_with_its_own_capital_and_state(trend_settings):
+    from mqmas.trend.model import momentum_frame
+
+    daily = market()
+    w, score = momentum_frame(daily)
+    monday = w.index[w.index.dayofweek == 0][-1]
+    held = set(w.loc[monday][w.loc[monday] > 0].index)
+    assert held and "DOGE/USDT" not in held  # the falling coin never makes the top 5
+    assert w.loc[monday].sum() == pytest.approx(1.0)  # BTC above its 100-day average: fully invested
+    ex = FakeEx(daily)
+    await ex.load_markets()
+    cfg = trend_settings.model_copy(update={"ondas_capital_usdt": 100.0})
+    out = await runner_run([], cfg, ex)
+    assert set(out) == {"tendencia", "ondas"}
+    assert out["ondas"]["capital"] == 100.0 and out["tendencia"]["capital"] == 200.0
+    assert set(out["ondas"]["holdings"]) <= held
+    assert out["ondas"]["equity"] == pytest.approx(100.0, rel=0.02)
+
+
+def test_wave_hunter_goes_to_cash_when_btc_is_under_its_average():
+    from mqmas.trend.model import momentum_frame
+
+    daily = market()
+    daily["BTC/USDT"] = frame(900, -0.004, 1)  # BTC in a downtrend
+    w, _ = momentum_frame(daily)
+    assert w.iloc[-1].sum() == 0.0

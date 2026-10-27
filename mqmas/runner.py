@@ -1,4 +1,4 @@
-"""``python -m mqmas.runner [--status | --reset-halt]``: one tick of the trend allocator, then exit.
+"""``python -m mqmas.runner [--status | --reset-halt | --placar] [--desk D]``: one tick of every desk, then exit.
 
 Built for a cron job (Railway cron, a home server's crontab, a free VM): the process lives for about a
 minute per run, so hosting costs are close to zero, and nothing is lost when it is not running because
@@ -28,7 +28,7 @@ from mqmas.ops import Notifier
 from mqmas.persistence.db import Database
 from mqmas.research.data import PUBLIC_DATA_URL
 from mqmas.trend.committee import Committee, render_board
-from mqmas.trend.live import TrendAllocator
+from mqmas.trend.live import DESKS, TrendAllocator
 from mqmas.trend.specialists import Fundamental, Risk, Sentiment, Specialist, Technical
 
 log = logging.getLogger("mqmas.runner")
@@ -59,10 +59,12 @@ def build_committee(s: Settings, db: Database, http: httpx.AsyncClient, router: 
 
 
 async def run(argv: list[str], settings: Settings | None = None, exchange: Any = None) -> dict[str, Any]:
+    """One tick of every desk with capital (tendencia, ondas); returns their reports keyed by desk."""
     ap = argparse.ArgumentParser(prog="python -m mqmas.runner")
     ap.add_argument("--status", action="store_true", help="print the saved state and exit (no orders)")
     ap.add_argument("--reset-halt", action="store_true", help="clear a drawdown halt; trading resumes next run")
     ap.add_argument("--placar", action="store_true", help="print the specialists' scoreboard and exit (no orders)")
+    ap.add_argument("--desk", choices=sorted(DESKS), help="only this desk (default: every desk with capital)")
     args = ap.parse_args(argv)
     s = settings or get_settings()
     db = Database(s.db_path)
@@ -74,30 +76,38 @@ async def run(argv: list[str], settings: Settings | None = None, exchange: Any =
     committee = build_committee(s, db, http, router) if s.trend_committee else None
     if committee is not None:
         await committee.ensure_schema()
-    alloc = TrendAllocator(s, db, ex, notify=notifier.send if notifier.enabled else None, committee=committee)
+    capital = {"tendencia": s.trend_capital_usdt, "ondas": s.ondas_capital_usdt}
+    desks = [args.desk] if args.desk else [d for d in DESKS if capital[d] > 0]
+    allocs = [TrendAllocator(s, db, ex, notify=notifier.send if notifier.enabled else None, committee=committee,
+                             desk=d) for d in desks]
+    out: dict[str, Any] = {}
+    current = ""
     try:
         if args.placar:
             board = await committee.scoreboard() if committee else []
             print(render_board(board))
             return {"placar": board}
-        if args.status or args.reset_halt:
-            st = await alloc.load()
-            if args.reset_halt:
-                st.halted, st.peak = None, 0.0
-                await alloc.save()
-                log.info("halt cleared; the next run trades again")
-            return alloc.report(st.cash)
-        report = await alloc.run_once()
-        if s.heartbeat_url:
+        for alloc in allocs:
+            current = alloc.desk
+            if args.status or args.reset_halt:
+                st = await alloc.load()
+                if args.reset_halt:
+                    st.halted, st.peak = None, 0.0
+                    await alloc.save()
+                    log.info("%s: halt cleared; the next run trades again", alloc.desk)
+                out[alloc.desk] = alloc.report(st.cash)
+            else:
+                out[alloc.desk] = await alloc.run_once()
+        if s.heartbeat_url and not (args.status or args.reset_halt):
             async with httpx.AsyncClient(timeout=10) as c:
                 try:
                     await c.get(s.heartbeat_url)
                 except httpx.HTTPError as exc:
                     log.warning("heartbeat failed: %s", type(exc).__name__)
-        return report
+        return out
     except Exception as exc:
         if notifier.enabled:
-            await notifier.send(f"Alocador de tendência ({alloc.mode}) FALHOU: {type(exc).__name__}: {exc}"[:3500])
+            await notifier.send(f"{DESKS.get(current, 'Runner')} FALHOU: {type(exc).__name__}: {exc}"[:3500])
         raise
     finally:
         if exchange is None:

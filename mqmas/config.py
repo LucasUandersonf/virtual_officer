@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     book_live_enabled: bool = False  # second switch: real book orders need TRADING_MODE=live AND this
 
     # --- Trend allocator (python -m mqmas.runner: one tick per cron run) ------------------
-    trend_capital_usdt: float = Field(default=50.0, gt=0)  # the allocator never manages more than this + its P&L
+    trend_capital_usdt: float = Field(default=50.0, ge=0)  # never manages more than this + its P&L; 0 = desk off
     trend_vol_target: float = Field(default=0.40, gt=0, le=0.60)
     trend_top_n: int = Field(default=10, ge=3, le=20)
     trend_max_weight: float = Field(default=0.35, gt=0, le=0.50)
@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     trend_max_drawdown: float = Field(default=0.35, gt=0, le=0.60)  # from the equity peak: sell all and halt
     trend_live_enabled: bool = False  # second switch: real orders need TRADING_MODE=live AND this
     trend_kill_switch: bool = False  # true: sell everything on the next run and stay flat
+    # wave hunter (python -m mqmas.runner, second desk): weekly top-5 momentum while BTC > 100-day average.
+    # 0 = off. Validated with a 67 % historical drawdown: keep it a minority of the capital (e.g. 30 %).
+    # Its halt sits above that drawdown on purpose: a 50 % halt would have sold the 2025 bottom and missed 2026.
+    ondas_capital_usdt: float = Field(default=0.0, ge=0)
+    ondas_max_drawdown: float = Field(default=0.70, gt=0, le=0.80)
     trend_committee: bool = True  # the specialists review every proposed buy (in shadow unless listed below)
     # comma list of specialists whose votes change orders (tecnico,fundamentalista,sentimento,risco);
     # empty = all in shadow, so the desk trades exactly like the backtest while the scoreboard collects evidence
