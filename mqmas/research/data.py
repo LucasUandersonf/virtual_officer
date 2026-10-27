@@ -24,8 +24,17 @@ EXCLUDED_BASES = {
     "RLUSD", "XUSD", "BFUSD", "PAXG", "XAUT", "WBTC", "WBETH", "BETH", "STETH", "BNSOL", "UST", "USTC",
     # tokenized equities / ETFs that showed up in the volume ranking: not crypto, different market hours
     "SPCXB", "SNDKB", "SOXLB", "CRCLB", "MUB", "TSLAB", "NVDAB", "AAPLB", "MSTRB", "COINB", "SPYB", "QQQB",
+    "GOOGLB", "INTCB", "SKHYB", "AMZNB", "METAB", "MSFTB", "AMDB", "HOODB", "PLTRB",
+    "RWUSD",
 }
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
+
+
+def is_crypto(base: str) -> bool:
+    """False for stablecoins, wrappers, tokenized equities and leveraged tokens."""
+    if base in EXCLUDED_BASES or base.endswith(LEVERAGED_SUFFIXES) or len(base) < 2:
+        return False
+    return not (base.endswith("USD") or base.startswith("USD"))  # dollar stablecoins not yet in the list
 
 
 def candidate_pool(ex: object, size: int) -> list[str]:
@@ -37,7 +46,7 @@ def candidate_pool(ex: object, size: int) -> list[str]:
         if not (m.get("spot") and m.get("active") and m.get("quote") == "USDT"):
             continue
         base = str(m.get("base", ""))
-        if base in EXCLUDED_BASES or base.endswith(LEVERAGED_SUFFIXES) or len(base) < 2:
+        if not is_crypto(base):
             continue
         qv = float((tickers.get(sym) or {}).get("quoteVolume") or 0.0)
         rows.append((qv, sym))

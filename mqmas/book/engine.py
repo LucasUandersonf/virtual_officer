@@ -42,7 +42,7 @@ from mqmas.llm.router import LLMRouter
 from mqmas.models import AgentMessage, AgentRole, CroOpinion, ExitReason, Position, PositionStatus, Vote
 from mqmas.ops import trim_memory
 from mqmas.persistence.db import Database
-from mqmas.research.data import EXCLUDED_BASES, LEVERAGED_SUFFIXES, TF_MS
+from mqmas.research.data import TF_MS, is_crypto
 from mqmas.research.engine import Exit
 from mqmas.research.strategies import (
     FAMILIES,
@@ -169,7 +169,7 @@ class StrategyBook:
             if not (m.get("spot") and m.get("active") and m.get("quote") == "USDT"):
                 continue
             base = str(m.get("base", ""))
-            if base in EXCLUDED_BASES or base.endswith(LEVERAGED_SUFFIXES):
+            if not is_crypto(base):
                 continue
             rows.append((float((tickers.get(sym) or {}).get("quoteVolume") or 0.0), sym))
         rows.sort(reverse=True)
