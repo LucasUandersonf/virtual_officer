@@ -1,4 +1,6 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|all]`` — run missing or outdated labs."""
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|all]``.
+
+Runs the labs whose report is missing or outdated."""
 
 from __future__ import annotations
 
@@ -106,6 +108,16 @@ def main() -> None:
             for line in account.summarize_swing(rep):
                 log.info(line)
             log.info("swing book report saved to %s", path)
+    if which in ("classic", "all"):
+        from mqmas.research import classic_study
+
+        path = root / "classic_report.json"
+        if which == "classic" or not _current(path, classic_study.VERSION):
+            rep = classic_study.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in classic_study.summarize(rep):
+                log.info(line)
+            log.info("classic report saved to %s", path)
 
 
 if __name__ == "__main__":

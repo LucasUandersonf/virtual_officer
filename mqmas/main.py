@@ -18,7 +18,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, WebSocket
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from mqmas.agents.orchestrator import Orchestrator
@@ -327,6 +327,31 @@ async def pattern_library(tf: str | None = None) -> dict[str, Any]:
 async def ta_signals(limit: int = 50, min_score: float = 0.0) -> dict[str, Any]:
     """Audit trail of the confluence scans (every coin, every 4h/1d close)."""
     return {"signals": await _rt().db.recent_ta_signals(min(limit, 500), min_score)}
+
+
+@app.get("/api/export/{name}.csv", response_class=PlainTextResponse)
+async def export_csv(name: str) -> PlainTextResponse:
+    """Spreadsheet view (Excel / Google Sheets: =IMPORTDATA(url)) of trades or scanned signals."""
+    import csv
+    import io
+
+    rt = _rt()
+    if name == "operacoes":
+        rows = [json.loads(p.model_dump_json()) for p in await rt.db.closed_positions(rt.settings.trading_mode.value,
+                                                                                     limit=5000)]
+        rows += [json.loads(p.model_dump_json()) for p in await rt.db.active_positions(rt.settings.trading_mode.value)]
+    elif name == "sinais":
+        rows = [{**{k: v for k, v in r.items() if k not in ("componentes", "padroes", "mapa", "ordem")},
+                 **{f"ordem_{k}": v for k, v in r["ordem"].items()}} for r in await rt.db.recent_ta_signals(5000)]
+    else:
+        raise HTTPException(404, "use operacoes.csv or sinais.csv")
+    buf = io.StringIO()
+    if rows:
+        w = csv.DictWriter(buf, fieldnames=list(dict.fromkeys(k for r in rows for k in r)), extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f"inline; filename={name}.csv"})
 
 
 @app.get("/api/ta-study")

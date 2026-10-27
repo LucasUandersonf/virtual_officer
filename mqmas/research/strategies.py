@@ -95,6 +95,13 @@ def features(df: pd.DataFrame) -> pd.DataFrame:
     f["vwap"] = (tp * df["volume"]).groupby(day).cumsum() / df["volume"].groupby(day).cumsum().replace(0, np.nan)
     for q in (0.1, 0.2):
         f[f"bbwq{q}"] = f["bbw"].rolling(100).quantile(q)
+    f["adx14"] = adx(df)
+    f["atr_pct"] = f["atr"] / c
+    # last 55-bar leg for Fibonacci: is the high more recent than the low (an up leg)?
+    hi55 = f["high"].shift(1).rolling(55)
+    lo55 = f["low"].shift(1).rolling(55)
+    f["hh55"], f["ll55"] = hi55.max(), lo55.min()
+    f["up_leg"] = hi55.apply(np.argmax, raw=True) > lo55.apply(np.argmin, raw=True)
     return f
 
 
@@ -187,9 +194,63 @@ class Config:
         return dict(self.params)
 
 
+# ---------------------------------------------------------------------- classic swing (no optimised parameters)
+# Every number below is the textbook value, fixed before any test: EMA 20/50/200, ADX 20, Donchian 20,
+# volume 1.5×, Bollinger 20/2, Fibonacci 50–61.8 % with 78.6 % as invalidation.
+CLASSIC_SETUPS = ("tendencia", "rompimento", "bollinger", "fibonacci")
+CLASSIC_ATR_BAND = (0.015, 0.08)  # daily ATR% outside this band = market dead or too wild → stay out
+
+
+def classic_macro(f: pd.DataFrame, regime: np.ndarray) -> np.ndarray:
+    """The gate before any setup: BTC above its SMA100 (regime), coin above EMA200 with EMA50 > EMA200,
+    a trend that exists (ADX ≥ 20) and volatility in an acceptable band."""
+    c = f["close"]
+    ok = (c > f["ema200"]) & (f["ema50"] > f["ema200"]) & (f["adx14"] >= 20) & \
+        f["atr_pct"].between(*CLASSIC_ATR_BAND)
+    out: np.ndarray = ok.to_numpy(dtype=bool) & regime
+    return out
+
+
+def classic_triggers(f: pd.DataFrame) -> dict[str, pd.Series]:
+    c, o, lo = f["close"], f["open"], f["low"]
+    green = c > o
+    leg = f["hh55"] - f["ll55"]
+    fib50, fib618, fib786 = f["hh55"] - 0.5 * leg, f["hh55"] - 0.618 * leg, f["hh55"] - 0.786 * leg
+    return {
+        # moving averages: pullback to the EMA20 in an ordered trend, bullish close back above it
+        "tendencia": (f["ema20"] > f["ema50"]) & (lo <= f["ema20"]) & (c > f["ema20"]) & green,
+        # top/resistance: close above the prior 20-day high with volume 1.5× the 20-day average
+        "rompimento": (c > f["hh20"]) & (f["volume"] > 1.5 * f["vol20"]),
+        # Bollinger: close back inside after closing below the lower band (dip inside an uptrend)
+        "bollinger": (c.shift(1) < f["bblo2.0"].shift(1)) & (c > f["bblo2.0"]) & green,
+        # Fibonacci: an up leg retraced into the 50–61.8 % pocket, held 78.6 %, bullish close above 61.8 %
+        "fibonacci": f["up_leg"].astype(bool) & (lo <= fib50) & (lo >= fib786) & (c > fib618) & green,
+    }
+
+
+def _classic(f: pd.DataFrame, p: dict[str, Any], regime: np.ndarray) -> np.ndarray:
+    trig = classic_triggers(f)
+    names = CLASSIC_SETUPS if p["setup"] == "todos" else (p["setup"],)
+    fired = np.zeros(len(f), dtype=bool)
+    for n in names:
+        fired |= trig[n].fillna(False).to_numpy(dtype=bool)
+    if p.get("macro", True):
+        fired &= classic_macro(f, regime)
+    return fired
+
+
+CLASSIC_EXIT = Exit(stop_atr=2.0, target_atr=6.0, trail_atr=None, hold=20)  # stop 2 ATR, target 3R, 20 days
+
+
+def classic_configs() -> list[Config]:
+    out = [Config("classic", "1d", (("setup", s), ("macro", True)), CLASSIC_EXIT) for s in (*CLASSIC_SETUPS, "todos")]
+    out.append(Config("classic", "1d", (("setup", "todos"), ("macro", False)), CLASSIC_EXIT))
+    return out
+
+
 FAMILIES: dict[str, SignalFn] = {
     "breakout": _breakout, "pullback": _pullback, "meanrev": _meanrev, "squeeze": _squeeze,
-    "confluence": _confluence, "mtf": _mtf,
+    "confluence": _confluence, "mtf": _mtf, "classic": _classic,
 }
 HOLD = {"1h": 120, "4h": 60, "1d": 40}  # 5, 10 and 40 days
 
@@ -257,7 +318,7 @@ def relative_strength(daily: dict[str, pd.DataFrame], eligible: dict[pd.Period, 
 
 
 def config_by_key() -> dict[str, Config]:
-    return {c.key: c for c in build_configs()}
+    return {c.key: c for c in [*build_configs(), *classic_configs()]}
 
 
 def align_daily(flag: pd.Series, index: pd.DatetimeIndex) -> np.ndarray:
