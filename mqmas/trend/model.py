@@ -28,7 +28,10 @@ LOOKBACKS = (5, 10, 20, 30, 60, 90, 150, 250, 360)
 VOL_WINDOW = 90
 MIN_HISTORY = 365  # a coin trades only after a full year of daily candles (as in the paper)
 VOLUME_WINDOW = 30
-CRASH_STOP_ATR = 3.0  # exchange-side stop for when the bot is down; trails the close, never moves down
+# Exchange-side disaster stop for when the bot is down; trails the close and never moves down. Wide on purpose:
+# the model's own exit is the daily close under the channel midline, and a 3-ATR stop tested in v1 sold normal
+# swings (full-period Sharpe 0.89 with it, 1.18 without). At 6 ATR it only fires in a crash.
+CRASH_STOP_ATR = 6.0
 ATR_WINDOW = 14
 DAYS_PER_YEAR = 365
 

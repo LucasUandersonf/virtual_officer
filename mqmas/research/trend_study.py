@@ -8,7 +8,7 @@ The account is simulated day by day exactly as the live allocator trades:
 
 * decisions on the daily close, orders at the next daily open (fee + slippage on every leg);
 * Binance's US$ 5 minimum per order and a 25 % rebalancing band (``mqmas.trend.rebalance``);
-* an exchange-side crash stop 3 ATR under the close, ratcheted up daily; a coin that hits it is blocked
+* an exchange-side disaster stop 6 ATR under the close, ratcheted up daily; a coin that hits it is blocked
   until its trend signal strengthens again (a fresh breakout);
 * the accounts start at US$ 50, 120, 500 and 1 000, plus a large one where the minimum order never binds.
 
@@ -38,7 +38,7 @@ from mqmas.trend.rebalance import MIN_ORDER_USDT, plan_orders
 
 log = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2
 HISTORY_START = pd.Timestamp("2019-01-01", tz="UTC")
 COMPARABLE_START = pd.Timestamp("2023-07-01", tz="UTC")  # the other studies' out-of-sample period
 POOL_SIZE = 40
@@ -47,8 +47,8 @@ IDEAL_EQUITY = 1_000_000.0  # the minimum order never binds
 
 
 def simulate(daily: dict[str, pd.DataFrame], weights: pd.DataFrame, signal: pd.DataFrame, equity0: float,
-             costs: Costs, start: pd.Timestamp, crash_stop: bool = True, min_order: float = MIN_ORDER_USDT
-             ) -> dict[str, Any]:
+             costs: Costs, start: pd.Timestamp, crash_stop: bool = True, min_order: float = MIN_ORDER_USDT,
+             stop_atr: float = CRASH_STOP_ATR) -> dict[str, Any]:
     """Day-by-day account: returns the daily equity curve, fees, turnover, exposure and round trips."""
     opens = pd.DataFrame({s: d["open"] for s, d in daily.items()}).reindex(weights.index)
     lows = pd.DataFrame({s: d["low"] for s, d in daily.items()}).reindex(weights.index)
@@ -134,7 +134,7 @@ def simulate(daily: dict[str, pd.DataFrame], weights: pd.DataFrame, signal: pd.D
             for sym in units:
                 a = float(atrs.at[day, sym])
                 if np.isfinite(a) and a > 0:
-                    lvl = float(c[sym]) - CRASH_STOP_ATR * a
+                    lvl = float(c[sym]) - stop_atr * a
                     stops[sym] = max(stops.get(sym, lvl), lvl)
     eq = pd.Series(curve, index=days, dtype=float)
     return {"equity": eq, "fees": fees, "turnover": turnover, "exposure": float(np.mean(expo)) if expo else 0.0,
@@ -264,9 +264,10 @@ class TrendStudy:
             rep["referencias"][name] = refs
         # sensitivity: never used to choose the live configuration
         sens: dict[str, Any] = {}
-        variants = {
+        variants: dict[str, tuple[TrendParams, Costs, bool | float]] = {
             "custo_dobrado": (base, Costs(fee=0.002, slippage=0.001), True),
             "sem_stop_de_crash": (base, costs, False),
+            "stop_3atr_v1": (base, costs, 3.0),
             "vol_alvo_25": (replace(base, vol_target=0.25), costs, True),
             "vol_alvo_60": (replace(base, vol_target=0.60), costs, True),
             "top5": (replace(base, top_n=5, max_weight=0.5), costs, True),
@@ -274,7 +275,8 @@ class TrendStudy:
         }
         for name, (p, c, cs) in variants.items():
             wv, sv = frames(p)
-            sens[name] = {lab: summary(simulate(daily, wv, sv, eq0, c, s, crash_stop=cs), eq0)
+            stop_atr = cs if isinstance(cs, float) else CRASH_STOP_ATR
+            sens[name] = {lab: summary(simulate(daily, wv, sv, eq0, c, s, crash_stop=bool(cs), stop_atr=stop_atr), eq0)
                           for lab, eq0, s in (("ideal_completo", IDEAL_EQUITY, start),
                                               ("ideal_desde_2023_07", IDEAL_EQUITY, COMPARABLE_START),
                                               ("US$120_completo", 120.0, start))}
