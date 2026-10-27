@@ -36,7 +36,7 @@ from mqmas.trend.model import MIN_HISTORY, TrendParams, eligibility, weights_fra
 
 log = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2
 THRESHOLDS = (0.10, 0.20, 0.30, -0.10)
 HORIZONS = (1, 5, 10, 20)
 UNIVERSE = 30
@@ -116,9 +116,47 @@ def wave_capture(closes: pd.DataFrame, elig: pd.DataFrame, w: pd.DataFrame, star
     return out
 
 
+def _line(eq: pd.Series) -> dict[str, Any]:
+    m: dict[str, Any] = dict(curve_metrics(eq, 1.0))
+    m["by_year"] = by_year(eq, 1.0)
+    return m
+
+
+def robustness(closes: pd.DataFrame, w_mom: pd.DataFrame, w_trend: pd.DataFrame, start: pd.Timestamp,
+               costs: Costs) -> dict[str, Any]:
+    """Is the momentum result a few lottery tickets? Costs doubled, without its 3 / 5 best coins, and blends."""
+    out: dict[str, Any] = {}
+    out["momentum_custo_dobrado"] = _line(run_weights(closes, w_mom, start, Costs(fee=2 * costs.fee,
+                                                                                    slippage=2 * costs.slippage)))
+    rets = closes.pct_change().fillna(0.0)
+    contrib = (w_mom.shift(1).fillna(0.0) * rets).loc[start:].sum()
+    ranked = contrib.sort_values(ascending=False)
+    out["maiores_contribuidores"] = {s: round(float(v), 3) for s, v in ranked.head(8).items()}
+    for k in (3, 5):
+        drop = list(ranked.index[:k])
+        kept = closes.drop(columns=drop)
+        # the same rule rerun as if those coins never existed (their slot goes to the next-best coin)
+        elig = eligibility({s: pd.DataFrame({"close": kept[s], "volume": _VOL[s]}) for s in kept.columns}, UNIVERSE)
+        btc = kept["BTC/USDT"]
+        regime = btc > btc.rolling(BTC_SMA).mean()
+        w = weekly_weights(kept, elig, kept / kept.shift(MOM_DAYS) - 1, regime)
+        out[f"momentum_sem_top{k}"] = {"removidas": drop, **_line(run_weights(kept, w, start, costs))}
+    for share in (0.2, 0.3, 0.5):
+        w = (1 - share) * w_trend + share * w_mom
+        out[f"carteira_{int((1 - share) * 100)}tendencia_{int(share * 100)}momentum"] = {
+            "completo": _line(run_weights(closes, w, start, costs)),
+            "desde_2023_07": _line(run_weights(closes, w, COMPARABLE_START, costs))}
+    return out
+
+
+_VOL: dict[str, pd.Series] = {}
+
+
 def run(root: Path, ex: Any = None, daily: dict[str, pd.DataFrame] | None = None) -> dict[str, Any]:
     daily = daily if daily is not None else TrendStudy(root).load(ex)
     closes = pd.DataFrame({s: d["close"] for s, d in daily.items()}).sort_index()
+    _VOL.clear()
+    _VOL.update({s: d["volume"].reindex(closes.index) for s, d in daily.items()})
     btc = closes["BTC/USDT"]
     start = btc.dropna().index[0] + pd.Timedelta(days=MIN_HISTORY)
     costs = Costs()
@@ -151,6 +189,8 @@ def run(root: Path, ex: Any = None, daily: dict[str, pd.DataFrame] | None = None
             row[per] = m
         row["captura_de_ondas"] = wave_capture(closes, elig, w, start)
         rep["estrategias"][name] = row
+    rep["robustez"] = robustness(closes, strategies["momentum_3sem_top5_filtro_btc"].reindex(closes.index).fillna(0.0),
+                                 strategies["tendencia_ondas_top20_vol60"].reindex(closes.index).fillna(0.0), start, costs)
     hold = (btc.loc[start:] / btc.loc[start:].iloc[0])
     rep["segurar_btc"] = {"completo": {**curve_metrics(hold, 1.0), "by_year": by_year(hold, 1.0)},
                           "desde_2023_07": curve_metrics(btc.loc[COMPARABLE_START:] / btc.loc[COMPARABLE_START:].iloc[0], 1.0)}
@@ -178,6 +218,19 @@ def summarize(rep: dict[str, Any]) -> list[str]:
         out.append(f"WAVES {name} captura: " + " | ".join(
             f"{k}: {v['dias']} dias, posicionado {v['posicionado_pct']:.0%}, contribuição {v['contribuicao']:+.2f}"
             for k, v in cap.items() if isinstance(v, dict)) + f" | contribuição total {cap['contribuicao_total']:+.2f}")
+    r = rep["robustez"]
+    for name, v in r.items():
+        if name == "maiores_contribuidores":
+            out.append(f"WAVES robustez: moedas que mais contribuíram ao momentum: {v}")
+        elif "completo" in v:
+            for per in ("completo", "desde_2023_07"):
+                m = v[per]
+                out.append(f"WAVES robustez {name} {per}: CAGR {m['cagr']:+.1%} DD {m['max_drawdown']:.1%} "
+                           f"Sharpe {m['sharpe']:.2f} meses+ {m['positive_months']:.0%}"
+                           + (f" | anos {m['by_year']}" if per == "completo" else ""))
+        else:
+            out.append(f"WAVES robustez {name}: CAGR {v['cagr']:+.1%} DD {v['max_drawdown']:.1%} Sharpe {v['sharpe']:.2f}"
+                       + (f" removidas {v['removidas']}" if "removidas" in v else "") + f" | anos {v['by_year']}")
     b = rep["segurar_btc"]
     out.append(f"WAVES segurar BTC completo: CAGR {b['completo']['cagr']:+.1%} DD {b['completo']['max_drawdown']:.1%} "
                f"Sharpe {b['completo']['sharpe']:.2f} | desde 2023-07: CAGR {b['desde_2023_07']['cagr']:+.1%} "
