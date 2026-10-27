@@ -1,0 +1,260 @@
+<title>Playbook de Setups MQ-MAS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; a regime strip, a risk sheet, then one setup card per playbook entry. */
+:root {
+  --bg: #F6F7FB; --surface: #FFFFFF; --ink: #161A2B; --ink-2: #3D4460; --muted: #6A7290;
+  --line: #DEE2EE; --accent: #5B4BE0; --good: #11875A; --bad: #C4372B; --warn: #A86A00; --info: #2F6FB3;
+  --good-bg: #E3F5EC; --bad-bg: #FBE7E4; --warn-bg: #FBF0DA; --info-bg: #E2EDF8; --chip-bg: #ECEEF6;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0B0F1A; --surface: #121829; --ink: #E7EAF4; --ink-2: #C3C9DD; --muted: #8E97B5;
+  --line: #222A42; --accent: #9C90FF; --good: #4ADE9D; --bad: #FF8A80; --warn: #FBC15E; --info: #7FB2F0;
+  --good-bg: #12301F; --bad-bg: #36191A; --warn-bg: #33270F; --info-bg: #132640; --chip-bg: #1B2238;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0B0F1A; --surface: #121829; --ink: #E7EAF4; --ink-2: #C3C9DD; --muted: #8E97B5;
+  --line: #222A42; --accent: #9C90FF; --good: #4ADE9D; --bad: #FF8A80; --warn: #FBC15E; --info: #7FB2F0;
+  --good-bg: #12301F; --bad-bg: #36191A; --warn-bg: #33270F; --info-bg: #132640; --chip-bg: #1B2238;
+  color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 920px; margin: 0 auto; padding-block: 40px 72px; display: flex; flex-direction: column; gap: 48px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 800; line-height: 1.08; }
+h2 { font-size: 24px; font-weight: 700; }
+h3 { font-size: 18px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; color: var(--ink-2); }
+.eyebrow { font: 500 12px/1 var(--f-mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+header { display: flex; flex-direction: column; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 13px var(--f-mono); color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 18px; }
+.rule { border-left: 3px solid var(--accent); padding: 4px 0 4px 16px; font-size: 17px; color: var(--ink); max-width: 68ch; }
+.regimes { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.regime { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.regime .tag { font: 600 12px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.regime p { font-size: 13.5px; }
+.t-alta { color: var(--good); } .t-queda { color: var(--bad); } .t-lateral { color: var(--info); } .t-volatil { color: var(--warn); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--chip-bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cards { display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+.card-top h3 { display: flex; gap: 10px; align-items: baseline; }
+.card-top h3 .n { font: 500 13px var(--f-mono); color: var(--muted); }
+.status { font: 600 11.5px var(--f-mono); letter-spacing: 0.05em; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
+.s-ativo { background: var(--good-bg); color: var(--good); }
+.s-obs { background: var(--warn-bg); color: var(--warn); }
+.s-rep { background: var(--bad-bg); color: var(--bad); }
+.s-out { background: var(--chip-bg); color: var(--muted); }
+.card.win { border-color: var(--good); }
+dl.rules { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 14px; }
+dl.rules dt { font: 500 12.5px var(--f-mono); color: var(--muted); padding-top: 2px; }
+dl.rules dd { margin: 0; color: var(--ink-2); }
+.stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stat { font: 12.5px var(--f-mono); background: var(--chip-bg); color: var(--ink-2); padding: 3px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.stat b { color: var(--ink); font-weight: 500; }
+.matrix { display: flex; flex-wrap: wrap; gap: 6px; }
+.cell { font: 12px var(--f-mono); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.cell.pos { border-color: var(--good); color: var(--good); } .cell.neg { border-color: var(--bad); color: var(--bad); }
+.verdict { font-size: 14px; color: var(--ink); }
+.lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.lesson { border-top: 2px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.lesson h3 { font-size: 16px; }
+.lesson p { font-size: 14px; }
+ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--ink-2); max-width: 68ch; }
+footer { font: 12.5px var(--f-mono); color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 520px) { dl.rules { grid-template-columns: 1fr; } dl.rules dt { padding-top: 6px; } }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">MQ-MAS · Mesa quant · Binance Spot</span>
+    <h1>Playbook de Setups</h1>
+    <p>Os 10 setups da lista do time, mais o setup vencedor da nossa pesquisa, testados com a mesma régua: dados reais de 40 moedas, validação fora da amostra (walk-forward) de jul/2023 a out/2026, taxas e derrapagem descontadas, e correção pelo número de testes feitos. Nenhum setup entra no robô sem passar aqui.</p>
+    <div class="meta"><span>670 configurações testadas</span><span>40 moedas · 1h / 4h / 1d</span><span>custo 0,15% por lado</span><span>atualizado 27/out/2026</span></div>
+  </header>
+
+  <section aria-labelledby="h-regra">
+    <span class="eyebrow">Regra de ouro</span>
+    <h2 id="h-regra">O mercado dita a estratégia</h2>
+    <p class="rule">Nenhum setup funciona em todas as fases. Antes de qualquer entrada, o robô classifica a fase de cada moeda no fechamento do dia anterior e só libera os setups que provaram vantagem naquela fase.</p>
+    <div class="regimes">
+      <div class="regime"><span class="tag t-alta">Alta</span><p>Preço acima da EMA200, EMA50 acima da EMA200 e ADX(14) ≥ 20.</p><p><b>Joga:</b> rompimento e confluência de tendência.</p></div>
+      <div class="regime"><span class="tag t-lateral">Lateral</span><p>Sem tendência confirmada ou tendência fraca (ADX &lt; 20).</p><p><b>Joga:</b> pouco. Rompimentos de range com cautela.</p></div>
+      <div class="regime"><span class="tag t-queda">Queda</span><p>Preço abaixo da EMA200 e EMA50 abaixo da EMA200.</p><p><b>Joga:</b> nada no spot. Fica em USDT.</p></div>
+      <div class="regime"><span class="tag t-volatil">Volátil</span><p>ATR% acima do percentil 90 do último ano (crash ou euforia).</p><p><b>Joga:</b> nada. Stops largos demais e gaps.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-risco">
+    <span class="eyebrow">Gestão de risco</span>
+    <h2 id="h-risco">Regras que valem para todos os setups</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Regra</th><th>Valor</th><th>Por quê</th></tr></thead>
+      <tbody>
+        <tr><td>Risco por operação</td><td class="num">0,6% da banca</td><td>Perda no stop de ~US$ 0,30 com US$ 50. Pode subir até 1,5%, por decisão do time.</td></tr>
+        <tr><td>Posições simultâneas</td><td class="num">máx. 3, 1 por moeda</td><td>Altcoins caem juntas: mais posições é a mesma aposta repetida.</td></tr>
+        <tr><td>Perda diária</td><td class="num">1,5% da banca</td><td>Atingiu, a mesa para até o fim do dia (UTC).</td></tr>
+        <tr><td>Sequência de perdas</td><td class="num">2 stops → 24h</td><td>Corta o tilt e o regime ruim antes que virem drawdown.</td></tr>
+        <tr><td>Alavancagem</td><td class="num">zero (spot)</td><td>Sem liquidação; o pior caso é o stop ou um gap.</td></tr>
+        <tr><td>Stop</td><td class="num">sempre, na corretora</td><td>Ordem stop-limit nativa: protege mesmo se o robô cair.</td></tr>
+        <tr><td>Saída por tempo</td><td class="num">conforme o setup</td><td>Capital parado é risco sem retorno.</td></tr>
+        <tr><td>Veto da IA</td><td class="num">pre-mortem da CRO</td><td>A IA só pode vetar, nunca forçar. Sem IA no ar, não entra.</td></tr>
+        <tr><td>Kill switch</td><td class="num">manual, imediato</td><td>Zera todas as posições pelo painel.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Mínimo da Binance: ordens abaixo de US$ 5 são recusadas. Com stops diários de ~14%, risco de 0,6% exige banca de ~US$ 120 (ou risco de ~1,5% com US$ 50).</p>
+  </section>
+
+  <section aria-labelledby="h-setups">
+    <span class="eyebrow">Fichas</span>
+    <h2 id="h-setups">Setups testados</h2>
+    <p>Critérios de aprovação: profit factor ≥ 1,3, payoff ≥ 1, drawdown ≤ 15%, Sharpe ≥ 1, Sharpe deflacionado ≥ 0,9, pelo menos 60 trades e lucro mesmo com custos dobrados. Matriz por regime: profit factor dos sinais em cada fase do mercado.</p>
+    <div class="cards">
+
+      <article class="card win">
+        <div class="card-top"><h3><span class="n">★</span>Confluência diária de rompimento</h3><span class="status s-ativo">Ativo · simulação</span></div>
+        <dl class="rules">
+          <dt>Fase</dt><dd>Alta (e lateral). BTC acima da média de 100 dias.</dd>
+          <dt>Entrada</dt><dd>Fechamento diário acima da máxima de 20 dias; moeda acima da EMA200 com EMA50 &gt; EMA200; 2 de 3 extras: força relativa no top 40%, volume &gt; 1,3× a média, RSI(14) entre 50 e 70. Compra na abertura seguinte.</dd>
+          <dt>Stop</dt><dd>Entrada − 2,5 × ATR(14) diário (mediana 14%).</dd>
+          <dt>Alvo</dt><dd>Entrada + 4,5 × ATR (risco:retorno 1 : 1,8). Saída por tempo em 20 dias.</dd>
+        </dl>
+        <div class="stats"><span class="stat"><b>102</b> trades</span><span class="stat">acerto <b>56%</b></span><span class="stat">PF <b>2,29</b></span><span class="stat">payoff <b>1,79</b></span><span class="stat">DD <b>2,9%</b></span><span class="stat">Sortino <b>4,16</b></span><span class="stat">Sharpe defl. <b>0,94</b></span><span class="stat">PF custo×2 <b>2,18</b></span><span class="stat"><b>2,5</b> trades/mês</span></div>
+        <div class="matrix"><span class="cell pos">alta PF 2,00</span><span class="cell pos">lateral PF 1,21</span><span class="cell neg">volátil PF 0,98</span><span class="cell">queda: bloqueado</span></div>
+        <p class="verdict">Único setup que passou em tudo, exceto % de meses positivos (40%), porque fica em caixa nos meses de queda. Média de +0,73%/mês a 0,6% de risco; +1,23%/mês a 1% de risco.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#1</span>Rompimento de range 20 barras com volume</h3><span class="status s-obs">Em observação</span></div>
+        <dl class="rules">
+          <dt>Entrada</dt><dd>Fechamento acima da máxima de 20 barras com volume ≥ 1,5× a média; canal com largura ≤ 30%.</dd>
+          <dt>Stop</dt><dd>Meio do canal de 20 barras.</dd>
+          <dt>Alvo</dt><dd>Sem alvo fixo; saída por tempo.</dd>
+        </dl>
+        <div class="stats"><span class="stat">1d: <b>65</b> trades</span><span class="stat">acerto <b>45%</b></span><span class="stat">PF <b>1,40</b></span><span class="stat">DD <b>5,9%</b></span><span class="stat">Sharpe defl. <b>0,05</b></span><span class="stat">4h: PF <b>1,08</b>, DD 20%</span></div>
+        <div class="matrix"><span class="cell pos">alta PF 1,82</span><span class="cell pos">lateral PF 1,96</span><span class="cell pos">queda PF 2,01</span><span class="cell neg">volátil PF 0,00</span></div>
+        <p class="verdict">No diário é positivo, mas a evidência estatística é fraca (pode ser sorte). No 4h, não sobrevive aos custos. Fica em observação; parecido com o vencedor, que já captura esse movimento com mais filtros.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#2</span>Golden Cross EMA50/200</h3><span class="status s-rep">Reprovado</span></div>
+        <dl class="rules">
+          <dt>Entrada</dt><dd>Cruzamento da EMA50 sobre a EMA200, ou pullback na EMA50 depois do cruzamento.</dd>
+          <dt>Stop</dt><dd>3 a 5 × ATR; saída no fechamento abaixo da EMA200.</dd>
+        </dl>
+        <div class="stats"><span class="stat">1d: <b>28</b> trades</span><span class="stat">acerto <b>29%</b></span><span class="stat">PF <b>1,48</b></span><span class="stat">payoff <b>3,03</b></span><span class="stat">DD <b>5,0%</b></span><span class="stat">stop mediano <b>23%</b></span></div>
+        <p class="verdict">Sinal raro (0,7 por mês) e atrasado; stop tão largo que exige ~US$ 190 de banca. Amostra pequena demais para confiar.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#3</span>Divergência de RSI + engolfo</h3><span class="status s-rep">Reprovado</span></div>
+        <dl class="rules">
+          <dt>Entrada</dt><dd>Lado comprado (spot): nova mínima com RSI mais alto + candle de engolfo de alta.</dd>
+          <dt>Stop</dt><dd>Abaixo da mínima do swing.</dd>
+        </dl>
+        <div class="stats"><span class="stat">1h: PF <b>0,63</b>, DD <b>57%</b></span><span class="stat">4h: PF <b>0,97</b>, DD 14%</span></div>
+        <div class="matrix"><span class="cell neg">alta PF 0,94</span><span class="cell neg">lateral PF 0,72</span><span class="cell neg">queda PF 0,86</span><span class="cell pos">volátil PF 1,20</span></div>
+        <p class="verdict">Comprar contra a tendência perde dinheiro em quase todas as fases. A versão vendida exige futuros, fora do mandato.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#4</span>Scalping de paredes do livro</h3><span class="status s-out">Não testável</span></div>
+        <p class="verdict">Não existe histórico público do livro de ofertas para testar. E a conta não fecha: alvo de 0,2–0,5% contra 0,2–0,3% de custo por ida e volta. Paredes são frequentemente falsas (spoofing). Descartado.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#5</span>Arbitragem de funding (delta neutro)</h3><span class="status s-out">Fora do mandato</span></div>
+        <p class="verdict">Exige futuros perpétuos além do spot. Rende só enquanto o funding está positivo (mercado de alta) e tem custo de 4 pernas. Com US$ 50 os mínimos das duas contas comem o ganho. Candidato a módulo separado se o time liberar futuros sem alavancagem.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#6</span>Grid bot spot</h3><span class="status s-rep">Reprovado</span></div>
+        <dl class="rules">
+          <dt>Regra</dt><dd>Grid de 10 ou 20 níveis no range dos últimos 30 dias, rearmado todo mês, cesta BTC/ETH/SOL/BNB/XRP; stop se fechar 5–10% abaixo do piso.</dd>
+        </dl>
+        <div class="stats"><span class="stat">10 níveis: PF <b>0,91</b></span><span class="stat">meses+ <b>60%</b></span><span class="stat">DD <b>32,5%</b></span><span class="stat">mês médio <b>−0,55%</b></span></div>
+        <div class="matrix"><span class="cell pos">BTC em alta: +1,9%/mês</span><span class="cell neg">BTC em queda: −5,6%/mês</span></div>
+        <p class="verdict">O clássico do grid: ganha pouquinho quase todo mês e devolve tudo numa queda. Bonito no gráfico, perdedor no acumulado.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#7</span>Reteste de resistência rompida</h3><span class="status s-rep">Reprovado</span></div>
+        <dl class="rules">
+          <dt>Entrada</dt><dd>Rompimento com volume; ordem limitada no nível rompido por até 5–10 barras.</dd>
+          <dt>Stop</dt><dd>Nível − 1 a 1,5 × ATR. Alvo de 2 a 3 R.</dd>
+        </dl>
+        <div class="stats"><span class="stat">4h: <b>353</b> trades</span><span class="stat">PF <b>1,09</b></span><span class="stat">DD <b>12%</b></span><span class="stat">PF custo×2 <b>0,99</b></span><span class="stat">1d: PF <b>1,13</b></span></div>
+        <div class="matrix"><span class="cell pos">alta PF 1,28</span><span class="cell neg">lateral PF 0,77</span><span class="cell pos">queda PF 1,48</span><span class="cell neg">volátil PF 0,69</span></div>
+        <p class="verdict">Positivo antes dos custos, empata depois. Em lateral perde: o “reteste” vira falso rompimento.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#8</span>Squeeze de Bollinger</h3><span class="status s-rep">Reprovado</span></div>
+        <div class="stats"><span class="stat">1h: PF <b>0,84</b>, DD 41%</span><span class="stat">4h: PF <b>0,95</b></span><span class="stat">1d: PF <b>1,29</b>, só 42 trades</span></div>
+        <p class="verdict">Nos tempos curtos a maioria dos rompimentos falha e as taxas pesam. No diário é quase aceitável, mas com poucos sinais.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#9</span>Rotação para altcoins (dominância)</h3><span class="status s-obs">Em observação</span></div>
+        <dl class="rules">
+          <dt>Regra</dt><dd>Toda semana: as 5 moedas com melhor retorno de 60 dias, só quando as alts batem o BTC (proxy da dominância caindo); senão fica em BTC; tudo em USDT se o BTC perder a média de 100 dias; saída da moeda que fechar abaixo da média de 20 dias.</dd>
+        </dl>
+        <div class="stats"><span class="stat">mês médio <b>+1,07%</b></span><span class="stat">PF <b>1,21</b></span><span class="stat">DD <b>15,6%</b></span><span class="stat">Sharpe defl. <b>0,47</b></span><span class="stat">sem dominância: <b>+2,46%</b>/mês, DD 25%</span></div>
+        <div class="matrix"><span class="cell pos">alta +4,3%/mês</span><span class="cell pos">lateral +0,4%/mês</span><span class="cell neg">queda −1,9%/mês</span></div>
+        <p class="verdict">A maior média mensal de todas, mas com drawdown acima do limite. O filtro de dominância cortou o risco pela metade e o retorno também. Candidato a um segundo setup se o time aceitar drawdown de ~15%.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><h3><span class="n">#10</span>DCA semanal</h3><span class="status s-out">Referência</span></div>
+        <p class="verdict">Não é setup de trade: é a régua de comparação. Comprar um valor fixo toda segunda-feira é o que qualquer setup precisa superar, com menos risco, para justificar o trabalho. Os números ficam no relatório do servidor (<span class="mono">/api/research</span>).</p>
+      </article>
+
+    </div>
+  </section>
+
+  <section aria-labelledby="h-roteador">
+    <span class="eyebrow">Teste da regra de ouro</span>
+    <h2 id="h-roteador">Roteador por regime</h2>
+    <p>Juntamos todos os setups e deixamos cada um operar só nas fases em que tinha provado vantagem no passado (aprendendo com os dados anteriores a cada janela). Resultado: 12,4 trades por mês, profit factor 1,07, drawdown de 13,8% e prejuízo com custos dobrados. Mais operações, mas a vantagem some. A regra de ouro está certa; o que funciona é aplicá-la dentro de um setup forte (o vencedor já só opera em alta), não usá-la para salvar setups fracos.</p>
+  </section>
+
+  <section aria-labelledby="h-licoes">
+    <span class="eyebrow">O que aprendemos</span>
+    <h2 id="h-licoes">Lições para o time</h2>
+    <div class="lessons">
+      <div class="lesson"><h3>Tempo gráfico curto não paga</h3><p>Em 1h e 4h, quase tudo empata antes da taxa e perde depois. A vantagem aparece no diário.</p></div>
+      <div class="lesson"><h3>Confluência funciona</h3><p>O rompimento diário sozinho tem PF 1,78; com tendência, força relativa e volume, sobe para 2,29 com metade do drawdown.</p></div>
+      <div class="lesson"><h3>Ficar parado é posição</h3><p>Em mercado de queda, o melhor setup não opera. Meses em caixa são proteção, não falha.</p></div>
+      <div class="lesson"><h3>Ganhar sempre é suspeito</h3><p>O grid fecha positivo em 60% dos meses e mesmo assim perde no acumulado. Olhe o drawdown, não a frequência de acerto.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-proximos">
+    <span class="eyebrow">Próximos passos</span>
+    <h2 id="h-proximos">Decisões do time</h2>
+    <ol class="steps">
+      <li>Rodar o setup vencedor em simulação por 2 a 3 meses e comparar com o teste.</li>
+      <li>Escolher o risco por operação: 0,6% com banca de ~US$ 120, ou 1,5% com US$ 50.</li>
+      <li>Decidir se a rotação com dominância (#9) entra como segundo setup, aceitando drawdown de ~15%.</li>
+      <li>Pesquisar novas confluências: universo de 25 moedas, gráfico de 12h, funding e open interest como filtros.</li>
+    </ol>
+  </section>
+
+  <footer>Fonte: laboratório de pesquisa MQ-MAS (pesquisa v5), dados da Binance Spot. Resultado passado não garante resultado futuro; os números já incluem taxas de 0,1% e derrapagem de 0,05% por lado.</footer>
+</main>
