@@ -181,7 +181,10 @@ async def sectors(request: Request) -> dict[str, Any]:
         "sales": {"listings_live": sum(x.status == "live" for x in listings), "listings_manual": sum(x.status == "manual" for x in listings),
                   "listings_error": sum(x.status == "error" for x in listings), "undelivered": undelivered,
                   "by_platform": {k: {"sales": n, "gross_usd": g / 100} for k, (n, g) in by_plat.items()},
-                  "checkout": {k: v for k, v in (await db.get_state("checkout")).items() if k != "recovered_to"}},
+                  "checkout": {k: v for k, v in (await db.get_state("checkout")).items() if k != "recovered_to"},
+                  "funnel": await st.office.sales.funnel(14)},
         "cfo": {**await finance.goals(db, st.settings), "portfolio": await st.office.cfo.portfolio(),
-                "topic_margins": await st.office.cfo.topic_margins(30)},
+                "topic_margins": await st.office.cfo.topic_margins(30), "topic_roi": await st.office.cfo.topic_roi(30),
+                "ltv_cac": await finance.ltv_cac(db, st.settings), "infra": await db.get_state("infra"),
+                "pnl_month": await finance.pnl(db, st.settings, date.today().replace(day=1))},
     }

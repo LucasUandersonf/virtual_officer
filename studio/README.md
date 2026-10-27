@@ -23,32 +23,58 @@ Os votos e os números saem de código determinístico (`app/agents/frameworks.p
 | **Preço pelo valor** | Horas economizadas × US$ 50–150/h; o preço é ~15% de **um mês** do valor mínimo, arredondado para terminar em 7/9 (ex.: 4 h/mês → US$ 200 de valor → **US$ 29**) |
 | **Moat** | ≥ 2 sistemas integrados; "gerador de posts com ChatGPT" é marcado como **commodity** e descartado |
 
-A Iris descarta antes da reunião, com o motivo registrado, tudo o que é nice-to-have, tem TTV > 5 min, moat < 2, é commodity ou tem score de MVP < 45.
+| **JTBD emocional e social** | Além do trabalho funcional, registra o sentimento por trás do pedido (ex.: "evitar o constrangimento de cobrar o cliente") e como o comprador quer ser visto |
+| **Gambiarra com 3+ ferramentas** | Post que cola 3 ou mais ferramentas à mão com 3 ou mais passos ganha bônus de WTP: o sinal definitivo de compra |
+| **Escopo do MVP** | Uma tarefa resolvida por inteiro; mais de 10 passos = excesso de funções (descarta) |
+| **Fricção cognitiva** | Chaves + credenciais + servidor que o comprador precisa configurar, contra a tolerância do público (técnico 8, não técnico 5,5) |
+| **Hábito de pagar** | Sinais de "pago por…/assinatura" contra "alternativa grátis/pirata", mais o perfil do público; abaixo de −0,3, descarta |
+| **Âncoras de preço** | A Iris ancora em US$ 19 / 29 / 49 / 99 / 149; o Leo depois ajusta com preços terminados em 7/9 e elasticidade |
+
+A Iris descarta antes da reunião, com o motivo registrado, tudo o que é nice-to-have, tem TTV > 5 min, moat < 2, é commodity, tem excesso de escopo, fricção acima do tolerado, público que não paga, ou score de MVP < 45. Os temas também sobem ou descem conforme o ROI real (Nina) e a conversão das landing pages (Leo).
 
 ### Theo, Senior Dev, QA & Architect (Dev Room)
 - **Workflows n8n:** nó *Guard* logo após o webhook, com autenticação por `WEBHOOK_SECRET`, validação dos campos obrigatórios e **idempotência** (entregas duplicadas são ignoradas via `$getWorkflowStaticData`). Retry com backoff (3 tentativas) em toda chamada externa, timeout no HTTP e webhook respondido no recebimento.
 - **Serviços FastAPI:** autenticação obrigatória, limite de 64 KB, validação de JSON, idempotência (`Idempotency-Key` ou id do payload), rate limit por cliente, erros que não vazam detalhes internos, e testes da API dentro do pacote.
 - **OWASP:** bloqueio de `eval`/`exec`/`subprocess`, scanner de segredos hard-coded (chaves Stripe, Slack, AWS, Google, GitHub, Groq…) no código e no JSON.
-- **QA de TTV:** o README tem no máximo 5 passos e o pacote no máximo 5 variáveis. Se não cumprir, o produto não vai à venda.
+- **QA de TTV:** o README abre com um **Quickstart de 3 passos**, o guia detalhado tem no máximo 5 passos e o pacote no máximo 5 variáveis. Se não cumprir, o produto não vai à venda.
+- **Self-healing:** toda chamada externa tenta de novo 3 vezes. Se ainda falhar, o item vai para um ramo de erro que escreve, em inglês simples, qual passo quebrou e o que conferir. Os outros itens seguem processando. Nos serviços Python, o `/health` mostra o último erro de forma legível.
+- **Pacote previsível:** `src/` (solução), `README.md`, `.env.example` com **100%** das variáveis que o código lê (conferido por análise estática) e `install.sh`.
+- **Baixo consumo:** o container usa 1 processo, sem log de acesso e com concorrência limitada, e fica em ~50 MB parado, para rodar numa instância mínima.
 
 ### Maya, Growth & Copy (Growth Studio)
 - Landing page com **PAS** (Problema, Agitação, Solução) sobre a dor medida pela Iris.
 - **Âncora de valor** só com números reais (ex.: "~6 h/mês = US$ 300–900 do seu tempo; um dev cobraria ~US$ 1.200; aqui custa US$ 47, uma vez").
 - **Objeções sempre respondidas** no FAQ: precisa programar?, quanto tempo leva?, funciona no meu plano do n8n?, e se não funcionar?
 - 4 e-mails pensados para evitar reembolso (dias 0, 1, 3 e 7), mais posts nativos para X, LinkedIn e Reddit.
-- **Filtro de honestidade:** copy com depoimento inventado, "trusted by 2,000+", estrelas ou garantia é descartada e trocada pela versão determinística.
+- **Aversão à perda:** "cada mês esperando custa ~6 h, US$ 300–900 do seu tempo, ~US$ 10 por dia", sempre calculado com os números reais.
+- **Copy escaneável:** bullets curtos com abertura em negrito e headline de até 80 caracteres, para leitura no celular.
+- **CTA de benefício:** "Get Instant Access — $47" no lugar de "Buy now".
+- **Confiança sem prova falsa:** checkout seguro, download imediato, roda no seu stack, proteção contra duplicatas. Garantia só aparece se `REFUND_DAYS` > 0.
+- **Posts como estudo de caso** e análise técnica, sem resultados inventados; **inglês americano nativo** (corrige grafias britânicas).
+- **Filtro de honestidade:** copy com depoimento inventado, "trusted by 2,000+", estrelas ou promessa de garantia não configurada é descartada e trocada pela versão determinística.
 
 ### Leo, Account Executive & RevOps (Sales Desk)
 - Preços de US$ 19 a 149 terminados em 7 ou 9. Só aprova se um mês de valor for ≥ 3× o preço ("no-brainer").
 - Descrição formatada por plataforma: Stripe com texto curto, Whop com bullets, Gumroad com HTML.
 - Webhook assinado (HMAC), entrega do download na hora e registro idempotente.
 - **Checkout abandonado** (`checkout.session.expired`): um único e-mail de recuperação, **somente** se o comprador aceitou receber comunicações no checkout (o Payment Link pede consentimento). **Pagamento recusado** gera alerta para você.
+- **CRO no checkout:** o mínimo de campos; Apple Pay e Google Pay aparecem sozinhos quando ativados no painel do Stripe.
+- **Funil por produto:** visitas na landing → cliques em "comprar" (`/buy/{slug}`) → vendas. Com 100 visitas ou mais: CTR < 3% faz a Maya reescrever a página; conversão no checkout < 10% (com 20+ cliques) baixa o preço um degrau; visita→compra > 5% (com 5+ vendas) sobe um degrau. No máximo uma mudança a cada 7 dias. No Stripe, o novo preço gera um novo link e o antigo é desativado.
+- **Cupom de lançamento real:** `LAUNCH_DISCOUNT_PCT`% por 48 h (o cupom expira de fato), exibido na landing.
+- **Cross-sell:** a landing e o e-mail de entrega sugerem produtos relacionados que já estão à venda.
+- **Fraude e disputas:** chargeback e reembolso revogam o download na hora, e você é avisado. Três ou mais compras do mesmo e-mail em 1 hora geram alerta (o Stripe Radar avalia o cartão).
 
 ### Nina, CFO & Strategy (Finance)
 - `Lucro líquido = receita bruta − taxas de checkout − infraestrutura (Railway + IA)`, fechado todo dia.
 - **Veto:** a ideia precisa cobrir sua fatia do custo do escritório (payback ≥ 1) com margem de contribuição ≥ 70% depois das taxas.
 - **Foco semanal:** os temas com maior margem real nos últimos 30 dias vêm primeiro, depois a evidência da Iris. Temas que a Iris descartaria só entram no foco se já dão dinheiro.
 - **Auditoria do portfólio:** produto publicado há 21 dias sem venda é reposicionado (a Maya reescreve com outro ângulo, uma vez); depois de 42 dias, a Nina recomenda desativar (ou desativa sozinha, com `AUTOPAUSE_STALE=true`).
+- **ROI por tema:** contribuição de 30 dias ÷ custo do escritório absorvido pelos produtos do tema. É ele que define o foco semanal e dá bônus aos temas na pontuação da Iris.
+- **Runway e austeridade:** caixa (`CASH_BALANCE_USD` + lucro) ÷ queima mensal. Se a infraestrutura passar de `INFRA_BUDGET_USD`, as chamadas de IA caem pela metade e a pesquisa roda com metade da frequência.
+- **Consumo real da Railway (opcional):** com `RAILWAY_API_TOKEN`, a Nina mede CPU, RAM, tráfego e disco aos preços públicos e usa isso no P&L no lugar da estimativa.
+- **Taxas reais, câmbio e imposto:** a taxa estimada do Stripe considera cartões internacionais (`INTL_SHARE`) e, depois de cada venda, é trocada pela taxa real da transação. O P&L mostra câmbio (`PAYOUT_CURRENCY`) e imposto sobre a receita (`TAX_RATE_PCT`).
+- **LTV/CAC:** LTV pela recompra real; CAC = `AD_SPEND_MONTHLY_USD` ÷ novos compradores (orgânico = US$ 0).
+- **Break-even:** vendas necessárias no mês calculadas com o líquido médio **real** por venda (US$ 49 de referência até a primeira venda).
 
 **Regra das reuniões:** aprovação exige 4 de 5 votos **e** o voto da Nina. Cada reunião custa uma única chamada de IA.
 
@@ -93,7 +119,7 @@ As fontes de pesquisa também são gratuitas. O X/Twitter (API paga) e o Google 
 
 | Plataforma | Publicação | Vendas |
 |---|---|---|
-| **Stripe** (recomendado) | 100% automática: Product → Price → Payment Link | Webhook `checkout.session.completed`, `charge.refunded`, `checkout.session.expired` e `payment_intent.payment_failed` |
+| **Stripe** (recomendado) | 100% automática: Product → Price → Payment Link | Webhook `checkout.session.completed`, `charge.refunded`, `charge.dispute.created`, `checkout.session.expired` e `payment_intent.payment_failed` |
 | **Whop** | Automática via API v1 (`/products` + `/plans` one_time). Confira os campos na doc do Whop: não consegui acessá-la deste ambiente | Webhook `payment.succeeded` (HMAC) |
 | **Gumroad** | Tenta `POST /v2/products`. Esse endpoint não aparece em todas as versões da doc, então, se falhar, o anúncio vira "manual" e o Leo deixa título, descrição, preço e `.zip` prontos para você subir | Ping de venda em `/webhooks/gumroad?key=…` |
 
@@ -147,6 +173,9 @@ studio/
 
 - **Autonomia de publicação:** `AUTOPUBLISH=false` por padrão. Revise os primeiros produtos antes de ligar: vender algo gerado por IA sem olhar arrisca reembolsos e reclamações nas plataformas.
 - **O modelo de demanda da Nina é uma estimativa arbitrária** (0,1 + score do MVP ÷ 40 vendas/mês, ×1,5 se for hair on fire) até existirem vendas reais. A partir daí, quem manda são a margem real e as vendas por tema.
+- **Order bump no checkout não foi implementado:** o pacote extra exigiria entregar dois produtos a partir de uma única venda. O Leo faz cross-sell na landing e no e-mail de entrega.
+- **A consulta de consumo da Railway** (`estimatedUsage`) segue a API GraphQL pública, mas não está totalmente documentada. Se falhar, a Nina volta às estimativas `RAILWAY_*_USD` e registra o motivo no log.
+- **Elasticidade de preço automática só no Stripe.** No Gumroad e no Whop, o Leo registra que o preço precisa ser mudado à mão.
 - **Os detectores da Iris leem texto em inglês** (valores em $, "hours a week", "losing clients"…). Posts em outros idiomas pontuam pouco.
 - **Reddit a partir da nuvem** costuma bloquear sem OAuth. Crie um app "script" gratuito e preencha `REDDIT_CLIENT_ID` e `REDDIT_CLIENT_SECRET`.
 - **Esquema do banco:** no boot, o escritório cria as tabelas e **adiciona colunas novas** a bancos existentes. Renomear, trocar tipo ou remover coluna ainda precisa de migração (Alembic).

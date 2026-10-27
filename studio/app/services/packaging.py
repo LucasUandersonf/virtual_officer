@@ -82,11 +82,12 @@ MAX_BODY = 64 * 1024
 RATE_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "120"))
 _seen: OrderedDict[str, dict] = OrderedDict()  # idempotency cache (single instance; use Redis/DB if you scale out)
 _hits: defaultdict[str, deque] = defaultdict(deque)
+_errors = {{"count": 0, "last": ""}}  # readable diagnosis exposed on /health (self-diagnosing service)
 
 
 @app.get("/health")
 def health() -> dict:
-    return {{"ok": True}}
+    return {{"ok": True, "errors": _errors["count"], "last_error": _errors["last"]}}
 
 
 def _rate_limited(client: str) -> bool:
@@ -118,8 +119,12 @@ async def webhook(request: Request, x_webhook_secret: str = Header(default=""), 
     try:
         result = process(payload)
     except (KeyError, ValueError, TypeError) as exc:
+        _errors["count"] += 1
+        _errors["last"] = f"Rejected a payload ({{type(exc).__name__}}: {{str(exc)[:120]}}). Check the fields your tool sends."
         raise HTTPException(status_code=422, detail=f"invalid payload: {{type(exc).__name__}}") from exc
     except Exception as exc:  # never leak internals to the caller
+        _errors["count"] += 1
+        _errors["last"] = f"Internal error ({{type(exc).__name__}}). See the container logs; the request can be retried safely."
         log.exception("process failed")
         raise HTTPException(status_code=500, detail="internal error") from exc
     if key:
@@ -129,14 +134,45 @@ async def webhook(request: Request, x_webhook_secret: str = Header(default=""), 
     return result
 '''
 
+# Lean by design: one process, no access log, capped concurrency and malloc arenas -> ~40-60 MB RAM idle,
+# which keeps a Railway/Render instance in the cents-per-day range.
 SERVICE_DOCKERFILE = """FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 MALLOC_ARENA_MAX=2 PORT=8080
+RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-ENV PORT=8080
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+RUN pip install -r requirements.txt
+COPY --chown=app:app . .
+USER app
+HEALTHCHECK --interval=60s --timeout=4s CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/health',timeout=3)"
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 1 --no-access-log --limit-concurrency 50"]
 """
+
+INSTALL_PY = """#!/usr/bin/env sh
+# Builds and runs the service with your .env (Docker). Stop it with: docker rm -f {slug}
+set -e
+cd "$(dirname "$0")"
+[ -f .env ] || {{ cp .env.example .env; echo "Created .env: fill in WEBHOOK_SECRET and the other values, then run ./install.sh again."; exit 1; }}
+docker build -t {slug} src
+docker rm -f {slug} >/dev/null 2>&1 || true
+docker run -d --name {slug} --restart unless-stopped -p 8080:8080 --env-file .env {slug}
+echo "Running: curl http://localhost:8080/health"
+"""
+
+INSTALL_N8N = """#!/usr/bin/env sh
+# Self-hosted n8n only (run on the n8n host). n8n Cloud: Workflows -> Import from File -> src/workflow.json
+set -e
+cd "$(dirname "$0")"
+n8n import:workflow --input=src/workflow.json
+echo "Imported. Open n8n, add the credentials and variables from .env.example, then activate."
+"""
+
+ENV_USE = re.compile(r"(?:os\.environ\.get|os\.getenv|os\.environ\[)\(?\s*['\"]([A-Z][A-Z0-9_]*)['\"]")
+
+
+def python_env_vars(*sources: str) -> list[str]:
+    """Every environment variable the Python code reads, so .env.example documents 100 % of them."""
+    return sorted({m for src in sources for m in ENV_USE.findall(src)})
 
 SERVICE_TEST = '''from logic import process
 
@@ -173,22 +209,22 @@ def test_duplicate_delivery_is_not_processed_twice():
 '''
 
 
-def python_service_files(name: str, logic: str, sample: str) -> dict[str, str]:
+def python_service_files(name: str, logic: str, sample: str, slug: str = "service") -> dict[str, str]:
     return {
-        "service/main.py": SERVICE_MAIN.format(name=name),
-        "service/logic.py": logic,
-        "service/requirements.txt": "fastapi==0.115.12\nuvicorn==0.34.2\nhttpx==0.28.1\npytest==8.3.5\n",
-        "service/Dockerfile": SERVICE_DOCKERFILE,
-        "service/test_logic.py": SERVICE_TEST.format(sample=sample),
-        "service/test_api.py": SERVICE_API_TEST,
-        "start.sh": "#!/usr/bin/env sh\ncd service && pip install -r requirements.txt && uvicorn main:app --port 8080\n",
+        "src/main.py": SERVICE_MAIN.format(name=name),
+        "src/logic.py": logic,
+        "src/requirements.txt": "fastapi==0.115.12\nuvicorn==0.34.2\nhttpx==0.28.1\npytest==8.3.5\n",
+        "src/Dockerfile": SERVICE_DOCKERFILE,
+        "src/test_logic.py": SERVICE_TEST.format(sample=sample),
+        "src/test_api.py": SERVICE_API_TEST,
+        "install.sh": INSTALL_PY.format(slug=slug),
     }
 
 
 def n8n_files(workflow_json: str) -> dict[str, str]:
     return {
-        "workflow.json": workflow_json,
-        "import.sh": "#!/usr/bin/env sh\n# Imports the workflow into a self-hosted n8n (run on the n8n host)\nn8n import:workflow --input=workflow.json\n",
+        "src/workflow.json": workflow_json,
+        "install.sh": INSTALL_N8N,
     }
 
 

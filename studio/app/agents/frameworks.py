@@ -9,6 +9,11 @@ Iris (Head of Product)
 * Distribution with zero CAC: clear English search intent + riding a big ecosystem (n8n, Stripe, ...).
 * Value-based price: hours saved x $50-150/h; the price is ~15 % of the low end of one month of value.
 * Moat: >= 2-3 integrated systems; one-API "ChatGPT wrappers" are commodities.
+* Workaround detection: 3+ tools glued together by hand is the definitive buying signal (WTP bonus).
+* MVP scope: the smallest unit that solves 100 % of the job in one use; > 10 steps = feature creep.
+* Cognitive friction: keys, credentials and servers the buyer must handle vs what the audience tolerates.
+* Action bias: does this audience pay for software, or reach for free/pirated tools?
+* Price anchors: $19 / $29 / $49 / $99 / $149 (Iris); Leo fine-tunes with 7/9 charm prices and elasticity.
 
 Leo uses ``charm_price``; Maya uses ``value_anchor``; Nina uses the contribution margin helpers.
 """
@@ -44,6 +49,10 @@ _SATISFIED = re.compile(r"\b(works (fine|well|great)|happy with|solved it|no pro
 _STEP_SPLIT = re.compile(r"\s*(?:,|;|->|→|\bthen\b|\bafter that\b|\bnext\b|\bfinally\b|\band\b)\s*", re.IGNORECASE)
 _MANUAL_VERB = re.compile(r"\b(download|export|upload|import|cop(y|ies)|paste|run|send|email|check|update|enter|type|open|move|sync|"
                           r"re-?enter|merge|format|rename|forward|attach|log|track|reconcile|chase|remind)\w*\b", re.IGNORECASE)
+_PAYS = re.compile(r"\b(i pay|we pay|paying for|paid for|subscription|subscribed|worth (every penny|paying|the money)|would (happily |gladly )?pay|"
+                   r"take my money|bought|purchased|licen[cs]e|budget for)\b", re.IGNORECASE)
+_FREE = re.compile(r"\b(free (alternative|version|tool|option|plan only)|open[- ]source alternative|pirat\w*|crack(ed)?|cheapest|"
+                   r"without paying|for free|can'?t afford|no budget)\b", re.IGNORECASE)
 _TOOLS = re.compile(r"\b(spreadsheet|excel|google sheets?|csv|stripe|quickbooks|xero|notion|airtable|zapier|make|n8n|gmail|outlook|"
                     r"calendly|cal\.com|hubspot|shopify|slack|whatsapp|python script|script|crm|trello|clickup)\b", re.IGNORECASE)
 
@@ -60,6 +69,8 @@ class PostAssessment:
     importance: float  # 1-10
     satisfaction: float  # 1-10 (current solution)
     opportunity: float  # 0-20
+    multi_tool_workaround: bool = False  # 3+ tools glued together by hand
+    paying_signal: float = 0.0  # +1 pays for software, -1 hunts free/pirated tools
 
     def as_dict(self) -> dict[str, Any]:
         return {k: round(v, 2) if isinstance(v, float) else v for k, v in asdict(self).items()}
@@ -102,7 +113,9 @@ def assess_post(text: str, engagement: int = 0, intent_hits: float = 0.0) -> Pos
         urgency = "nice_to_have"
     else:
         urgency = "important"
-    wtp = min(10.0, 1.5 * steps + (2.0 if tools >= 2 else 1.0 if tools else 0.0) + (1.0 if money > 0 else 0.0))
+    multi_tool = tools >= 3 and steps >= 3
+    wtp = min(10.0, 1.5 * steps + (2.0 if tools >= 2 else 1.0 if tools else 0.0) + (1.0 if money > 0 else 0.0) + (2.0 if multi_tool else 0.0))
+    paying = max(-1.0, min(1.0, 0.5 * len(_PAYS.findall(text)) - 0.5 * len(_FREE.findall(text))))
     importance = 3.0 + {"hair_on_fire": 4.0, "important": 2.0, "nice_to_have": 0.0}[urgency]
     importance += min(2.0, math.log10(1 + max(engagement, 0))) + min(1.0, intent_hits / 2)
     importance = min(10.0, importance)
@@ -110,7 +123,7 @@ def assess_post(text: str, engagement: int = 0, intent_hits: float = 0.0) -> Pos
     satisfaction += 3.0 if _SATISFIED.search(text) else 0.0
     satisfaction = max(1.0, min(10.0, satisfaction))
     opportunity = importance + max(importance - satisfaction, 0.0)
-    return PostAssessment(urgency, money, hours, churn, steps, tools, wtp, importance, satisfaction, opportunity)
+    return PostAssessment(urgency, money, hours, churn, steps, tools, wtp, importance, satisfaction, opportunity, multi_tool, paying)
 
 
 # ------------------------------------------------------------------ pricing and value
@@ -127,8 +140,23 @@ def value_anchor(hours_saved_month: float, integrations: int) -> dict[str, float
             "dev_build_cost": max(2, integrations) * 4 * DEV_RATE}
 
 
+PRICE_ANCHORS = (19, 29, 49, 99, 149)
+
+
 def value_price(hours_saved_month: float) -> int:
-    return charm_price(0.15 * hours_saved_month * HOURLY_LOW)
+    """Iris's anchor: ~15 % of one month of the buyer's time at $50/h, snapped to the classic $19/29/49/99/149 points."""
+    target = 0.15 * hours_saved_month * HOURLY_LOW
+    return min(PRICE_ANCHORS, key=lambda p: (abs(p - target), p))
+
+
+def friction_score(env_vars: int, credentials: int, needs_server: bool) -> float:
+    """Cognitive friction of setup (0-10): every key to paste, every OAuth credential, and running a server."""
+    return min(10.0, 0.75 * env_vars + 1.5 * credentials + (3.0 if needs_server else 0.0))
+
+
+def friction_tolerance(technical_audience: bool) -> float:
+    """What the buyer accepts before giving up: n8n/dev users tolerate more than non-technical owners."""
+    return 8.0 if technical_audience else 5.5
 
 
 # ------------------------------------------------------------------ idea-level verdict
@@ -149,6 +177,11 @@ class IdeaAssessment:
     dev_build_cost: float
     price_usd: int
     no_brainer_ratio: float  # one month of value / price
+    scope_steps: int  # MVP size (workflow steps); > MAX_SCOPE = feature creep
+    friction: float  # 0-10
+    friction_tolerance: float
+    payer_habit: float  # -1..1
+    multi_tool_share: float  # share of evidence with 3+ tools glued by hand
     mvp_score: float  # 0-100
     approve: bool
     reasons: list[str] = field(default_factory=list)
@@ -162,9 +195,13 @@ def distribution_score(search_queries: tuple[str, ...] | list[str], ecosystems: 
     return min(10.0, min(6.0, 2.0 * len(eco)) + min(4.0, 1.0 * len(search_queries)))
 
 
+MAX_SCOPE = 10
+
+
 def assess_idea(signals: list[dict[str, Any]], *, ttv_minutes: int, integrations: tuple[str, ...] | list[str],
                 search_queries: tuple[str, ...] | list[str], ecosystems: tuple[str, ...] | list[str], hours_saved_month: float,
-                commodity: bool = False) -> IdeaAssessment:
+                commodity: bool = False, scope_steps: int = 6, env_vars: int = 3, credentials: int = 1,
+                needs_server: bool = False, technical_audience: bool = False, payer_prior: float = 0.3) -> IdeaAssessment:
     """``signals``: PostAssessment dicts of the topic's evidence (strongest first)."""
     top = sorted(signals, key=lambda a: -a.get("opportunity", 0))[:10] or [{}]
     opp = sum(a.get("opportunity", 0) for a in top) / len(top)
@@ -178,9 +215,15 @@ def assess_idea(signals: list[dict[str, Any]], *, ttv_minutes: int, integrations
     anchor = value_anchor(hours_saved_month, moat)
     price = value_price(hours_saved_month)
     ratio = anchor["value_month_low"] / price if price else 0.0
+    multi = sum(1 for a in top if a.get("multi_tool_workaround")) / len(top)
+    payer = 0.5 * payer_prior + 0.5 * (sum(a.get("paying_signal", 0.0) for a in top) / len(top))
+    friction = friction_score(env_vars, credentials, needs_server)
+    tolerance = friction_tolerance(technical_audience)
     ttv_factor = 1.0 if ttv_minutes <= TTV_LIMIT_MIN else 0.5 if ttv_minutes <= 10 else 0.2
     score = (30 * opp / 20 + 15 * wtp / 10 + 15 * dist / 10 + 15 * min(moat, 4) / 4
              + {"hair_on_fire": 25, "important": 12, "nice_to_have": 0}[urgency]) * ttv_factor
+    score += 5 * multi + 5 * payer - max(0.0, friction - tolerance) * 3
+    score = max(0.0, min(100.0, score))
     if commodity:
         score *= 0.3
     reasons = []
@@ -192,11 +235,17 @@ def assess_idea(signals: list[dict[str, Any]], *, ttv_minutes: int, integrations
         reasons.append("commoditized AI idea (saturated, zero perceived value)")
     elif moat < 2:
         reasons.append(f"moat too thin: {moat} integrated system(s), need >= 2")
+    if scope_steps > MAX_SCOPE:
+        reasons.append(f"feature creep: {scope_steps} steps > {MAX_SCOPE} for one job")
+    if friction > tolerance:
+        reasons.append(f"entry barrier: friction {friction:.1f} > {tolerance:.1f} this audience tolerates")
+    if payer < -0.3:
+        reasons.append(f"audience avoids paying for software (payer habit {payer:.2f})")
     if score < 45:
         reasons.append(f"MVP score {score:.0f} < 45")
     return IdeaAssessment(urgency, opp, hof, wtp, steps, ttv_minutes, dist, moat, commodity, hours_saved_month,
                           anchor["value_month_low"], anchor["value_month_high"], anchor["dev_build_cost"], price, ratio,
-                          round(score, 1), not reasons, reasons)
+                          scope_steps, friction, tolerance, round(payer, 2), multi, round(score, 1), not reasons, reasons)
 
 
 # ------------------------------------------------------------------ CFO helpers

@@ -89,6 +89,7 @@ class LLMRouter:
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(settings.llm_timeout_sec, connect=8.0))
         self._day = date.today()
         self.calls_today = 0
+        self.budget_factor = 1.0  # Nina halves it in austerity mode
 
     @property
     def enabled(self) -> bool:
@@ -97,14 +98,14 @@ class LLMRouter:
     def status(self) -> dict[str, Any]:
         return {
             "providers": [{"name": p.name, "available": p.available(), "models": p.models} for p in self.providers],
-            "calls_today": self.calls_today, "daily_budget": self.s.llm_daily_call_budget,
+            "calls_today": self.calls_today, "daily_budget": int(self.s.llm_daily_call_budget * self.budget_factor),
             "cost_usd": 0.0,  # free tiers only
         }
 
     def _budget_ok(self) -> bool:
         if date.today() != self._day:
             self._day, self.calls_today = date.today(), 0
-        return self.calls_today < self.s.llm_daily_call_budget
+        return self.calls_today < int(self.s.llm_daily_call_budget * self.budget_factor)
 
     async def _record(self, agent: str, p: Provider, model: str, ok: bool, ms: int, tokens: int) -> None:
         if self.db:

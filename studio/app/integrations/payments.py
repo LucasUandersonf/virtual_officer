@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +44,8 @@ class SaleEvent:
     listing_ref: str  # payment link id / gumroad product id / whop product or plan id
     fee_cents: int | None = None  # None = estimate from the platform's fee schedule
     refunded: bool = False
+    payment_ref: str = ""  # payment intent / charge id (refunds and disputes are matched on it)
+    disputed: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,7 +65,8 @@ class WebhookError(ValueError):
 
 def estimate_fee(s: Settings, platform: str, gross_cents: int) -> int:
     if platform == "stripe":
-        return round(gross_cents * s.stripe_fee_pct + s.stripe_fee_fixed_usd * 100)
+        pct = s.stripe_fee_pct + s.intl_share * s.stripe_intl_card_pct  # expected mix of domestic/foreign cards
+        return round(gross_cents * pct + s.stripe_fee_fixed_usd * 100)
     if platform == "gumroad":
         return round(gross_cents * s.gumroad_fee_pct + s.gumroad_fee_fixed_usd * 100)
     if platform == "whop":
@@ -95,8 +99,43 @@ class StripeClient:
             # asks for marketing consent where required, so abandoned checkouts can get one recovery email
             "consent_collection[promotions]": "auto",
             "allow_promotion_codes": "true",
+            # CRO: minimal fields; wallets (Apple Pay / Google Pay) show automatically when enabled in the Stripe dashboard
+            "billing_address_collection": "auto",
+            "submit_type": "pay",
         })
         return ListingResult("stripe", link["id"], link["url"], "live", f"product {prod['id']} price {price['id']}")
+
+    async def launch_promo(self, slug: str, percent: int, hours: int = 48) -> dict[str, Any]:
+        """Real scarcity: a coupon that truly expires after ``hours``."""
+        until = int(time.time()) + hours * 3600
+        coupon = await self._post("coupons", {"percent_off": percent, "duration": "once", "redeem_by": until,
+                                              "name": f"Launch {percent}% off"})
+        code = ("LAUNCH" + re.sub(r"[^A-Z0-9]", "", slug.upper()))[:20]
+        promo = await self._post("promotion_codes", {"coupon": coupon["id"], "code": code, "expires_at": until})
+        return {"code": promo.get("code", code), "percent": percent, "expires_at": until, "coupon": coupon["id"]}
+
+    async def reprice(self, product_ref: str, old_link: str, product_id: int, price_cents: int) -> ListingResult:
+        """Stripe payment links cannot change price: new Price + new link, old link deactivated."""
+        price = await self._post("prices", {"product": product_ref, "unit_amount": price_cents, "currency": "usd"})
+        link = await self._post("payment_links", {
+            "line_items[0][price]": price["id"], "line_items[0][quantity]": 1, "after_completion[type]": "redirect",
+            "after_completion[redirect][url]": f"{self.s.public_base_url}/thanks?session_id={{CHECKOUT_SESSION_ID}}",
+            "metadata[studio_product_id]": str(product_id), "consent_collection[promotions]": "auto",
+            "allow_promotion_codes": "true", "billing_address_collection": "auto", "submit_type": "pay"})
+        await self.deactivate(old_link)
+        return ListingResult("stripe", link["id"], link["url"], "live", f"product {product_ref} price {price['id']}")
+
+    async def settlement(self, payment_intent: str) -> dict[str, Any] | None:
+        """Actual fee and net in the settlement currency (Nina's audit), from the balance transaction."""
+        r = await self.client.get(f"{self.API}/payment_intents/{payment_intent}",
+                                  params={"expand[]": "latest_charge.balance_transaction"}, auth=(secret(self.s.stripe_secret_key), ""))
+        if r.status_code != 200:
+            return None
+        bt = ((r.json().get("latest_charge") or {}).get("balance_transaction")) or {}
+        if not isinstance(bt, dict) or "fee" not in bt:
+            return None
+        rate = float(bt.get("exchange_rate") or 1.0)
+        return {"fee_usd_cents": round(int(bt["fee"]) / rate), "net": int(bt.get("net", 0)), "currency": bt.get("currency", "usd")}
 
     async def deactivate(self, link_id: str) -> None:
         await self._post(f"payment_links/{link_id}", {"active": "false"})
@@ -122,9 +161,14 @@ def parse_stripe_event(event: dict[str, Any]) -> SaleEvent | None:
     obj = event.get("data", {}).get("object", {})
     if event.get("type") == "checkout.session.completed" and obj.get("payment_status") == "paid":
         return SaleEvent("stripe", obj["id"], int(obj.get("amount_total") or 0),
-                         (obj.get("customer_details") or {}).get("email") or "", obj.get("payment_link") or "")
+                         (obj.get("customer_details") or {}).get("email") or "", obj.get("payment_link") or "",
+                         payment_ref=obj.get("payment_intent") or "")
     if event.get("type") == "charge.refunded":
-        return SaleEvent("stripe", obj.get("payment_intent") or obj["id"], int(obj.get("amount") or 0), "", "", refunded=True)
+        pi = obj.get("payment_intent") or obj["id"]
+        return SaleEvent("stripe", pi, int(obj.get("amount") or 0), "", "", refunded=True, payment_ref=pi)
+    if event.get("type") == "charge.dispute.created":
+        pi = obj.get("payment_intent") or obj.get("charge") or obj.get("id", "")
+        return SaleEvent("stripe", pi, int(obj.get("amount") or 0), "", "", refunded=True, payment_ref=pi, disputed=True)
     return None
 
 

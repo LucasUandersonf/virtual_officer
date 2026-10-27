@@ -28,6 +28,8 @@ URGENCY_WEIGHT = {"hair_on_fire": 1.5, "important": 1.0, "nice_to_have": 0.3}
 class IdeaSpec(BaseModel):
     title: str = Field(max_length=120)
     job_to_be_done: str = Field(description="When <situation>, I want to <motivation>, so I can <outcome>.")
+    emotional_job: str = Field(description="The feeling the buyer wants to get rid of or gain (the hidden motivation)")
+    social_job: str = Field(description="How the buyer wants to be seen by clients/peers")
     problem: str
     niche: str
     solution_type: Literal["n8n", "python"]
@@ -40,9 +42,17 @@ def catalogue_posts() -> list[RawPost]:
     return [RawPost("playbook", t.key, f"Known pain: {t.problem[:180]}", "", t.problem, 0) for t in playbook.TOPICS]
 
 
+CREDENTIAL_KINDS = {"email": "SMTP", "sheets": "Google", "slack": "Slack"}
+
+
 def assess_topic(t: playbook.Topic, signals: list[dict[str, Any]]) -> frameworks.IdeaAssessment:
-    return frameworks.assess_idea(signals, ttv_minutes=t.setup_minutes, integrations=t.integrations, search_queries=t.search_queries,
-                                  ecosystems=t.ecosystems, hours_saved_month=t.hours_saved_month, commodity=t.commodity)
+    creds = {CREDENTIAL_KINDS[s.kind] for s in t.steps if s.kind in CREDENTIAL_KINDS}
+    return frameworks.assess_idea(
+        signals, ttv_minutes=t.setup_minutes, integrations=t.integrations, search_queries=t.search_queries,
+        ecosystems=t.ecosystems, hours_saved_month=t.hours_saved_month, commodity=t.commodity,
+        scope_steps=len(t.steps) if t.steps else 4, env_vars=len(t.env) + 1,  # +1: WEBHOOK_SECRET
+        credentials=len(creds), needs_server=t.solution_type == "python", technical_audience=t.technical_audience,
+        payer_prior=t.payer_prior)
 
 
 class HeadOfProduct(Agent):
@@ -104,7 +114,10 @@ class HeadOfProduct(Agent):
 
     async def topic_scores(self) -> dict[str, dict[str, float]]:
         """Evidence (opportunity x urgency + WTP + reach) plus what the market already taught us."""
-        focus = set((await self.ctx.db.get_state("strategy")).get("focus_topics", []))
+        strategy = await self.ctx.db.get_state("strategy")
+        focus = set(strategy.get("focus_topics", []))
+        roi = strategy.get("margins", {})  # Nina's 30-day ROI per topic (cohort of real sales)
+        topic_cr = (await self.ctx.db.get_state("funnel")).get("topic_cr", {})  # Leo's visitor-to-buyer per topic
         async with self.ctx.db.session() as ses:
             sold = dict((await ses.execute(select(Idea.topic, func.count(Sale.id)).join(Product, Product.idea_id == Idea.id)
                                            .join(Sale, Sale.product_id == Product.id).where(Sale.refunded.is_(False))
@@ -118,6 +131,10 @@ class HeadOfProduct(Agent):
                         + math.log1p(max(a.get("engagement", 0), 0)) for a in sigs)
             score += 3 * sold.get(topic, 0) - 2 * max(0, flops.get(topic, 0) - sold.get(topic, 0))
             score += 2.0 if topic in focus else 0.0
+            score += min(5.0, 2.0 * float(roi.get(topic, 0)))  # topics that made real money rank higher
+            cr = topic_cr.get(topic)
+            if cr is not None:  # the market's verdict on our landing pages
+                score += 2.0 if cr > 0.03 else -2.0 if cr < 0.005 else 0.0
             hof = sum(a.get("urgency") == "hair_on_fire" for a in sigs)
             agg[topic] = {"signals": float(len(sigs)), "score": round(score, 2), "hair_on_fire": float(hof),
                           "sales": float(sold.get(topic, 0))}
@@ -174,6 +191,8 @@ class HeadOfProduct(Agent):
             return IdeaSpec(title=t.product, problem=t.problem, niche=t.niche, solution_type=t.solution_type,  # type: ignore[arg-type]
                             job_to_be_done=f"When {t.problem.split(';')[0].lower().rstrip('.')}, I want it handled automatically, "
                                            f"so I can stop losing time and money.",
+                            emotional_job=t.emotional_job or "Stop the stress of doing it by hand.",
+                            social_job=t.social_job or "Look more professional to clients.",
                             mvp=t.mvp, rationale=self._why(v, agg))
 
         spec, provider = await self.ctx.llm.json(
@@ -184,15 +203,20 @@ class HeadOfProduct(Agent):
             f"Measured: urgency {v.urgency}, opportunity {v.opportunity:.1f}/20, WTP {v.wtp:.1f}/10 (max {v.max_workaround_steps} "
             f"manual steps described), saves ~{v.hours_saved_month:.0f} h/month (${v.value_month_low:.0f}-{v.value_month_high:.0f} of "
             f"the buyer's time), price ${v.price_usd} one-time.\n\n"
+            f"Friction {v.friction:.1f}/10 (tolerance {v.friction_tolerance:.1f}); payer habit {v.payer_habit:+.2f}; "
+            f"MVP scope {v.scope_steps} steps.\nKnown hidden motivation: {t.emotional_job} / {t.social_job}\n\n"
             "Write ONE narrow MVP the buyer can set up in under 5 minutes (import, fill 2-3 keys, activate), as an n8n workflow or "
-            "a small FastAPI service. State the Job-To-Be-Done. Be specific about the niche. Do not change the numbers.",
+            "a small FastAPI service. It must solve 100% of ONE job in a single use: no extra features. State the functional "
+            "Job-To-Be-Done, the emotional job (the feeling behind the request) and the social job (how they want to be seen). "
+            "Be specific about the niche. Do not change the numbers.",
             IdeaSpec, fallback)
         async with self.ctx.db.session() as ses:
             idea = Idea(topic=topic, title=spec.title[:200], problem=spec.problem, niche=spec.niche[:200], solution_type=spec.solution_type,
                         mvp=spec.mvp, price_cents=v.price_usd * 100, score=v.mvp_score,
                         evidence=[{"title": a, "url": b, "source": c} for a, b, c in ev],
                         rationale=f"JTBD: {spec.job_to_be_done} · {spec.rationale}", provider=provider,
-                        assessment={**v.as_dict(), "job_to_be_done": spec.job_to_be_done})
+                        assessment={**v.as_dict(), "job_to_be_done": spec.job_to_be_done,
+                                    "emotional_job": spec.emotional_job, "social_job": spec.social_job})
             ses.add(idea)
         await self.log("idea", f"New idea: {idea.title} — {v.urgency.replace('_', ' ')}, opportunity {v.opportunity:.1f}, "
                        f"MVP {v.mvp_score:.0f}, ${v.price_usd}", idea_id=idea.id, provider=provider)

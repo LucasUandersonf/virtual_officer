@@ -41,6 +41,11 @@ class Topic:
     search_queries: tuple[str, ...] = ()  # English searches with buying intent
     ecosystems: tuple[str, ...] = ()
     commodity: bool = False  # saturated "one prompt + one API" idea
+    # Jobs-to-be-done beyond the functional one: what the buyer feels and how they want to be seen
+    emotional_job: str = ""
+    social_job: str = ""
+    technical_audience: bool = False  # n8n/dev users tolerate more setup friction
+    payer_prior: float = 0.3  # -1..1: does this audience pay for software?
 
 
 _LEAD_LOGIC = '''"""Score inbound leads 0-100 and route hot ones."""
@@ -131,6 +136,8 @@ TOPICS: tuple[Topic, ...] = (
          ("SMTP_FROM", "Sender address for reminders"), ("REBOOK_LINK", "Your public booking link")),
         hours_saved_month=6, setup_minutes=5, integrations=('Cal.com/Calendly', 'SMTP email', 'booking API'),
         search_queries=('no show reminder automation', 'calendly reminder n8n template', 'reduce no-shows automatically'), ecosystems=('n8n', 'calendly', 'cal.com'),
+        emotional_job='Stop the sinking feeling of an empty slot and the awkwardness of chasing clients who flaked.',
+        social_job='Look like a professional practice with a front desk, not a solo act scrambling.', technical_audience=True, payer_prior=0.6,
     ),
     Topic(
         "lead_capture", ("lead gen", "lead generation", "leads from", "capture leads", "lead magnet", "inbound leads", "crm"),
@@ -147,6 +154,8 @@ TOPICS: tuple[Topic, ...] = (
          ("SMTP_FROM", "Sender address for replies")),
         hours_saved_month=8, setup_minutes=5, integrations=('web form', 'Google Sheets', 'SMTP email', 'Slack'),
         search_queries=('auto reply to leads n8n', 'lead capture google sheets automation', 'instant lead response template'), ecosystems=('n8n', 'google sheets', 'slack'),
+        emotional_job='Never again feel the panic of finding a hot lead three days late.',
+        social_job='Be the provider who answers first and looks bigger than one person.', technical_audience=True, payer_prior=0.6,
     ),
     Topic(
         "client_onboarding", ("client onboarding", "onboarding new clients", "onboard clients", "welcome packet", "intake form"),
@@ -164,6 +173,8 @@ TOPICS: tuple[Topic, ...] = (
          ("INTAKE_FORM_URL", "Link to your intake form"), ("SMTP_FROM", "Sender address")),
         hours_saved_month=6, setup_minutes=5, integrations=('payment/contract webhook', 'Google Drive', 'SMTP email', 'project tool'),
         search_queries=('client onboarding automation n8n', 'freelancer onboarding workflow template'), ecosystems=('n8n', 'stripe', 'notion'),
+        emotional_job="Stop dreading the admin that follows every 'yes' and the fear of forgetting a step.",
+        social_job='Give new clients a polished first impression that justifies premium rates.', technical_audience=True, payer_prior=0.6,
     ),
     Topic(
         "invoice_chasing", ("invoice", "late payment", "unpaid", "overdue", "chasing payments", "accounts receivable"),
@@ -174,6 +185,8 @@ TOPICS: tuple[Topic, ...] = (
         logic=_INVOICE_LOGIC,
         hours_saved_month=5, setup_minutes=8, integrations=('invoicing tool export', 'email provider'),
         search_queries=('automatic invoice reminders', 'chase unpaid invoices automation'), ecosystems=('stripe', 'quickbooks', 'xero'),
+        emotional_job='Avoid the social embarrassment of asking clients for money.',
+        social_job='Stay the friendly expert while the system plays bad cop.', technical_audience=False, payer_prior=0.5,
     ),
     Topic(
         "review_replies", ("google reviews", "review replies", "reply to reviews", "reputation", "yelp", "trustpilot"),
@@ -184,6 +197,8 @@ TOPICS: tuple[Topic, ...] = (
         logic=_REVIEW_LOGIC,
         hours_saved_month=4, setup_minutes=5, integrations=('review platform webhook', 'Slack/email'),
         search_queries=('reply to google reviews automatically', 'review response template'), ecosystems=('shopify',),
+        emotional_job='Stop the anxiety of a bad review sitting unanswered in public.',
+        social_job='Look responsive and caring to every future customer reading.', technical_audience=False, payer_prior=0.4,
     ),
     Topic(
         "lead_scoring", ("lead scoring", "qualify leads", "lead qualification", "which leads"),
@@ -194,6 +209,8 @@ TOPICS: tuple[Topic, ...] = (
         logic=_LEAD_LOGIC,
         hours_saved_month=4, setup_minutes=5, integrations=('CRM/form webhook', 'email domain rules'),
         search_queries=('lead scoring api', 'qualify inbound leads automatically'), ecosystems=('hubspot',),
+        emotional_job='Stop the guilt of wasting the best hours on tire-kickers.',
+        social_job='Be seen as a sharp operator who spends time where it counts.', technical_audience=False, payer_prior=0.5,
     ),
     Topic(
         "social_repurpose", ("repurpose content", "social media posting", "schedule posts", "content calendar", "linkedin posts"),
@@ -209,6 +226,8 @@ TOPICS: tuple[Topic, ...] = (
          ("GOOGLE_SHEET_ID", "Sheet used as the posting queue")),
         hours_saved_month=3, setup_minutes=5, integrations=('RSS', 'LLM API'),
         search_queries=('repurpose blog post to linkedin ai',), ecosystems=('openai',), commodity=True,
+        emotional_job='Quiet the guilt of not posting consistently.',
+        social_job='Look like an active thought leader.', technical_audience=False, payer_prior=0.0,
     ),
     Topic(
         "email_triage", ("inbox zero", "email overload", "too many emails", "sort emails", "email triage"),
@@ -222,6 +241,8 @@ TOPICS: tuple[Topic, ...] = (
         (("GROQ_API_KEY", "Free Groq key used for classification"), ("SLACK_CHANNEL", "Channel for urgent mail")),
         hours_saved_month=6, setup_minutes=5, integrations=('Gmail API', 'Groq LLM', 'Slack'),
         search_queries=('ai email triage gmail n8n', 'auto label gmail with ai'), ecosystems=('n8n', 'gmail', 'slack'),
+        emotional_job='Lose the dread of opening an inbox where something important is buried.',
+        social_job='Be the founder who replies to what matters the same day.', technical_audience=True, payer_prior=0.4,
     ),
     Topic(
         "weekly_report", ("weekly report", "kpi report", "client reporting", "reporting dashboard", "monthly report"),
@@ -235,6 +256,8 @@ TOPICS: tuple[Topic, ...] = (
         (("METRICS_API_URL", "Endpoint that returns the client's metrics"), ("SMTP_FROM", "Sender address")),
         hours_saved_month=6, setup_minutes=5, integrations=('metrics API', 'SMTP email'),
         search_queries=('automated client report n8n', 'weekly kpi email automation'), ecosystems=('n8n', 'google sheets'),
+        emotional_job='Stop losing Monday mornings to copy-paste busywork nobody pays for.',
+        social_job='Look like an agency with a reporting team.', technical_audience=True, payer_prior=0.5,
     ),
     Topic(
         "abandoned_cart", ("abandoned cart", "cart recovery", "checkout abandon", "shopify abandoned"),
@@ -250,6 +273,8 @@ TOPICS: tuple[Topic, ...] = (
         (("STORE_API_URL", "Your store API base URL"), ("DISCOUNT_CODE", "Code offered in the last email")),
         hours_saved_month=5, setup_minutes=5, integrations=('store webhook', 'store API', 'SMTP email'),
         search_queries=('abandoned cart email n8n', 'woocommerce abandoned cart automation'), ecosystems=('n8n', 'shopify', 'woocommerce'),
+        emotional_job='Stop watching almost-sales vanish every day.',
+        social_job='Run a store that feels as attentive as the big brands.', technical_audience=False, payer_prior=0.6,
     ),
     Topic(
         "testimonials", ("testimonial", "collect reviews", "case study", "social proof"),
@@ -263,6 +288,8 @@ TOPICS: tuple[Topic, ...] = (
         (("TESTIMONIAL_FORM_URL", "Your testimonial form link"), ("GOOGLE_SHEET_ID", "Where testimonials are stored")),
         hours_saved_month=2, setup_minutes=5, integrations=('project webhook', 'SMTP email', 'Google Sheets'),
         search_queries=('collect testimonials automatically',), ecosystems=('n8n', 'google sheets'),
+        emotional_job='Stop feeling awkward asking happy clients for a favor.',
+        social_job='Show visible proof that others trust you.', technical_audience=False, payer_prior=0.2,
     ),
     Topic(
         "meeting_notes", ("meeting notes", "call summary", "transcript", "follow-up email after call"),
@@ -275,6 +302,8 @@ TOPICS: tuple[Topic, ...] = (
         (("GROQ_API_KEY", "Free Groq key used for summaries"), ("GOOGLE_SHEET_ID", "Call log sheet")),
         hours_saved_month=6, setup_minutes=5, integrations=('recording webhook', 'Groq LLM', 'SMTP email', 'Google Sheets'),
         search_queries=('zoom transcript summary n8n', 'automatic follow up email after call'), ecosystems=('n8n', 'openai', 'google sheets'),
+        emotional_job='Stop the nagging fear that a promise made on a call gets forgotten.',
+        social_job='Be the consultant who always follows up, precisely, within the hour.', technical_audience=True, payer_prior=0.6,
     ),
 )
 

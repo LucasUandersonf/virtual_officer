@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     autopublish: bool = False
     # CFO audit: pause (deactivate the Stripe link of) products with no sale after 42 days. Off = recommend only.
     autopause_stale: bool = False
+    # Money-back guarantee offered in the copy (days). 0 = no guarantee is promised anywhere.
+    refund_days: int = 0
+    # Leo: launch coupon (percent off for the first 48 h after publishing on Stripe). 0 = off.
+    launch_discount_pct: int = 20
     # Pause between lines in meetings so the office UI can show the conversation (0 in tests).
     theatre_delay_sec: float = 3.0
 
@@ -89,6 +93,20 @@ class Settings(BaseSettings):
     gumroad_fee_pct: float = 0.10
     gumroad_fee_fixed_usd: float = 0.50
     whop_fee_pct: float = 0.03
+    # Nina's fee/FX/tax model (international sales)
+    stripe_intl_card_pct: float = 0.015  # extra fee on non-domestic cards
+    intl_share: float = 0.7  # expected share of buyers paying with a foreign card (global market)
+    payout_currency: str = "usd"  # currency your bank receives; != usd adds the conversion fee below
+    fx_conversion_pct: float = 0.02
+    tax_rate_pct: float = 0.0  # tax on gross revenue in your country (e.g. Simples Nacional); 0 = not modeled
+    # Runway and cost control
+    cash_balance_usd: float = 0.0  # starting cash set aside for the studio
+    infra_budget_usd: float = 10.0  # monthly infrastructure ceiling; above it Nina switches to austerity mode
+    ad_spend_monthly_usd: float = 0.0  # paid acquisition (CAC); 0 = organic only
+    # Railway usage (optional): real resource consumption instead of the RAILWAY_*_USD estimates.
+    # RAILWAY_PROJECT_ID is injected by Railway in every service; create the token in Account -> Tokens.
+    railway_api_token: SecretStr | None = None
+    railway_project_id: str = ""
 
     # --- goals ------------------------------------------------------------------------
     goal_monthly_revenue_usd: float = 500.0

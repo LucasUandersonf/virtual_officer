@@ -85,10 +85,10 @@ def test_secret_scanner():
 
 def test_service_template_is_defensive():
     files = packaging.python_service_files("Svc", "def process(payload):\n    return {}\n", "{}")
-    main = files["service/main.py"]
+    main = files["src/main.py"]
     for needle in ("compare_digest", "MAX_BODY", "idempotency_key", "_rate_limited", "status_code=422"):
         assert needle in main
-    assert "service/test_api.py" in files
+    assert "src/test_api.py" in files and "install.sh" in files
 
 
 # ------------------------------------------------------------------ Maya
@@ -137,3 +137,79 @@ def test_abandoned_checkout_requires_consent_flag():
     failed = parse_stripe_checkout_signal({"type": "payment_intent.payment_failed", "data": {"object": {
         "id": "pi_1", "last_payment_error": {"code": "card_declined"}}}})
     assert failed and failed.kind == "failed" and failed.reason == "card_declined"
+
+
+# ------------------------------------------------------------------ level 2
+def test_iris_multi_tool_workaround_and_payer_habit():
+    a = fw.assess_post("I export Stripe payouts to a CSV, paste into Google Sheets, then copy totals into QuickBooks and email my "
+                       "accountant. I pay for Zapier already.")
+    assert a.multi_tool_workaround and a.wtp == 10 and a.paying_signal > 0
+    assert fw.assess_post("Looking for a free alternative, can't afford another tool").paying_signal < 0
+
+
+def test_iris_scope_friction_and_payer_gates():
+    assert not _idea(scope_steps=15).approve
+    heavy = _idea(env_vars=6, credentials=3, needs_server=True, technical_audience=False)
+    assert heavy.friction > heavy.friction_tolerance and any("entry barrier" in r for r in heavy.reasons)
+    stingy = fw.assess_idea([{**fw.assess_post("free alternative please, can't afford it").as_dict()}], ttv_minutes=5,
+                            integrations=("A", "B", "C"), search_queries=("q",), ecosystems=("n8n",), hours_saved_month=6,
+                            payer_prior=-0.8)
+    assert any("avoids paying" in r for r in stingy.reasons)
+    assert fw.value_price(4) == 29 and fw.value_price(20) == 149
+
+
+def test_theo_self_healing_branch_and_layout():
+    wf = n8n.build_workflow("Demo", "demo", [{"kind": "webhook", "name": "In"}, {"kind": "http", "name": "Call"},
+                                             {"kind": "email", "name": "Mail"}], "guide")
+    assert wf["connections"]["Call"]["main"][1][0]["node"] == n8n.ERROR_SET
+    assert next(n for n in wf["nodes"] if n["name"] == "Call")["onError"] == "continueErrorOutput"
+    assert any(n["type"] == "n8n-nodes-base.stopAndError" for n in wf["nodes"])
+    assert n8n.validate_workflow(wf)["ok"]
+    files = packaging.python_service_files("Svc", 'import os\nKEY = os.environ.get("MY_KEY", "")\ndef process(p):\n    return {}\n', "{}", "svc")
+    assert set(files) >= {"src/main.py", "src/logic.py", "src/Dockerfile", "install.sh"}
+    assert "--limit-concurrency" in files["src/Dockerfile"] and "MALLOC_ARENA_MAX" in files["src/Dockerfile"]
+    assert packaging.python_env_vars(files["src/main.py"], files["src/logic.py"]) == ["MY_KEY", "RATE_LIMIT_PER_MIN", "WEBHOOK_SECRET"]
+    assert "last_error" in files["src/main.py"]
+
+
+def test_theo_readme_quickstart_gate():
+    from app.agents.builder import check_ttv, readme
+
+    text = readme("X", "t", "p", "n8n", "g", [("A", "a"), ("B", "b")])
+    assert "## 3-Step Quickstart" in text and check_ttv(text, [("A", "a")])["ok"]
+    assert not check_ttv(text, [(str(i), "") for i in range(7)])["ok"]
+
+
+def test_maya_polish_loss_aversion_cta_trust_us_english():
+    from app.agents.growth import polish_kit, us_english
+
+    p = _product()
+    kit = fallback_kit(p)
+    kit.landing.cta = "Buy now"
+    kit.landing.benefits[0] = "Optimise your colour scheme: and more"
+    out = polish_kit(kit, p, {"hours": 6, "value_month_low": 300, "value_month_high": 900, "price": 47, "ttv": 5}, ["stripe"], 0)
+    lp = out.landing
+    assert lp.cta == "Get Instant Access — $47"
+    from app.agents.growth import benefit_cta
+    assert benefit_cta("Get it for $49", "$49") == benefit_cta("Buy now - $49", "$49") == "Get Instant Access — $49"
+    assert benefit_cta("Automate My Workflow in 2 Mins", "$49") == "Automate My Workflow in 2 Mins"
+    assert "$300" in lp.cost_of_inaction and "every single day" in lp.cost_of_inaction
+    assert lp.benefits[0].startswith("**Optimize your colour scheme".replace("colour", "color"))
+    assert any("Stripe" in t for t in lp.trust) and not any("guarantee" in t for t in lp.trust)
+    assert any(f.q == "Is there a guarantee?" for f in lp.faq)
+    assert not honesty_violations(out)
+    with_refund = polish_kit(fallback_kit(p), p, {"hours": 6, "value_month_low": 300, "value_month_high": 900, "price": 47, "ttv": 5},
+                             ["stripe"], 14)
+    assert any("14-day money-back" in t for t in with_refund.landing.trust)
+    assert us_english("We realised the behaviour") == "We realized the behavior"
+
+
+def test_leo_dispute_parsing():
+    from app.integrations.payments import parse_stripe_event
+
+    ev = parse_stripe_event({"type": "charge.dispute.created", "data": {"object": {"id": "dp_1", "charge": "ch_1",
+                                                                                   "payment_intent": "pi_9", "amount": 4700}}})
+    assert ev and ev.refunded and ev.disputed and ev.payment_ref == "pi_9"
+    paid = parse_stripe_event({"type": "checkout.session.completed", "data": {"object": {
+        "id": "cs_9", "payment_status": "paid", "amount_total": 4700, "payment_intent": "pi_9"}}})
+    assert paid and paid.payment_ref == "pi_9"

@@ -115,11 +115,29 @@ class Sale(Base):
     fee_estimated: Mapped[bool] = mapped_column(Boolean, default=True)
     refunded: Mapped[bool] = mapped_column(Boolean, default=False)
     delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    # payment intent / charge reference: refunds and disputes arrive with it, not with the checkout session id
+    payment_ref: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    disputed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # what actually lands in the account (Nina's fee/FX audit), in the settlement currency's minor units
+    settle_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    settle_net: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     @property
     def net_cents(self) -> int:
         return 0 if self.refunded else self.gross_cents - self.fee_cents
+
+
+class FunnelDay(Base):
+    """Leo's funnel: landing views and buy clicks per product per day (sales come from the sales table)."""
+
+    __tablename__ = "funnel_days"
+    __table_args__ = (UniqueConstraint("product_id", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class CostEntry(Base):

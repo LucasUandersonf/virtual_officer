@@ -139,7 +139,8 @@ class Office:
         fallback = Lines(
             product=(f"Pitch: {idea.title}. Urgency: {urg}; opportunity {float(a.get('opportunity', 0)):.1f}/20, WTP "
                      f"{float(a.get('wtp', 0)):.1f}/10, moat {a.get('moat', '?')} systems, MVP score {idea.score:.0f}. "
-                     f"Buyer: {idea.niche}." if a else f"Pitch: {idea.title}. {idea.problem}"),
+                     f"Buyer: {idea.niche}." + (f" Hidden job: {a['emotional_job']}" if a.get("emotional_job") else "")
+                     if a else f"Pitch: {idea.title}. {idea.problem}"),
             builder=(f"{'Feasible' if votes['builder'] == 'APPROVE' else 'No'}: {idea.solution_type}, ~{hours:.1f} h to build, buyer "
                      f"setup ~{ttv} min. Guard node for auth + idempotency, retries on every external call."),
             growth=(f"Distribution {dist:.0f}/10: clear search intent and an ecosystem to ride; I'll lead with PAS on the measured pain."
@@ -164,7 +165,7 @@ class Office:
         s = self.ctx.settings
         g = await finance.goals(self.ctx.db, s)
         scores = await self.product.topic_scores()
-        margins = await self.cfo.topic_margins(30)
+        margins = await self.cfo.topic_roi(30)  # Nina: highest historical ROI first
         # Nina's rule: real contribution margin of the last 30 days first, then Iris's evidence
         verdicts = await self.product.verdicts()
         # topics Iris would discard (TTV, commodity, thin moat) only stay in focus if they already make money
@@ -177,17 +178,18 @@ class Office:
         rev = g["revenue"]
         behind = rev["run_rate"] < rev["target"]
         votes = {k: "" for k in ORDER}
-        by_margin = ", ".join(f"{t} ${m:.0f}" for t, m in sorted(margins.items(), key=lambda x: -x[1])[:3]) or "no sales yet"
+        by_margin = ", ".join(f"{t} ×{m:.1f}" for t, m in sorted(margins.items(), key=lambda x: -x[1])[:3]) or "no sales yet"
         fallback = Lines(
             cfo=(f"Month to date: ${rev['current']:.2f} net, run-rate ${rev['run_rate']:.2f} vs goal ${rev['target']:.0f}; profit "
                  f"${g['profit_mtd']:.2f} after fees and ${g['break_even']['monthly_cost_usd']:.2f}/month of infrastructure. "
-                 f"30-day margin by topic: {by_margin}." + (f" Stale (21+ days, no sale): {', '.join(stale)}." if stale else "")),
+                 f"30-day ROI by topic (contribution ÷ office cost absorbed): {by_margin}."
+                 + (f" Stale (21+ days, no sale): {', '.join(stale)}." if stale else "")),
             product=f"Focus this week: {', '.join(focus) or 'broad research'} — real margin first, then the strongest hair-on-fire evidence.",
             builder=f"{g['products_week']['current']}/{g['products_week']['target']} products this week. Small, guarded builds; setup under 5 minutes.",
             growth=("We're behind: one value-first Reddit/LinkedIn post per live product, and new angles for the stale ones." if behind
                     else "On track: double down on the channels that brought sales."),
             sales=f"{g['live_products']} products live. Download in seconds after the signed webhook; consented abandoned checkouts get one follow-up.")
-        facts = f"Goals snapshot: {g}\n30-day contribution by topic: {margins}\nFocus chosen: {focus}\nStale products: {stale}"
+        facts = f"Goals snapshot: {g}\n30-day ROI by topic: {margins}\nFocus chosen: {focus}\nStale products: {stale}"
         lines, _ = await self._lines("Weekly goals review", facts, fallback)
         await self._meeting("weekly_goals", "Weekly goals review", None, lines, votes, {"cfo": g}, "focus: " + ", ".join(focus),
                             f"Run-rate ${rev['run_rate']:.2f} vs ${rev['target']:.0f} goal; focus {', '.join(focus)}")
@@ -209,7 +211,13 @@ class Office:
         s = self.ctx.settings
         done: dict[str, Any] = {}
         await self.cfo.daily_close(self.growth, self.sales)
-        if await self._due("research", s.research_interval_min):
+        austerity = (await self.ctx.db.get_state("infra")).get("austerity", False)
+        today = date.today().isoformat()
+        leo = await self.ctx.db.get_state("leo")
+        if leo.get("funnel_day") != today:
+            done["funnel"] = len(await self.sales.funnel_review(self.growth))
+            await self.ctx.db.set_state("leo", {"funnel_day": today})
+        if await self._due("research", s.research_interval_min * (2 if austerity else 1)):
             ideas = await self.product.research()
             await self.ctx.db.set_state("research", {"last_at": utcnow().isoformat()})
             done["ideas"] = len(ideas)

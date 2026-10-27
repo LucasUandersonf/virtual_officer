@@ -412,12 +412,19 @@ function renderSectors(sec, summary, activity) {
       ["🔥 Hair on fire", sec.product.hair_on_fire || 0], ["Descartadas", sec.product.discarded || 0]],
     builder: [["Construídos", sec.builder.built], ["QA ok", sec.builder.qa_pass], ["n8n", sec.builder.n8n], ["Python", sec.builder.python]],
     growth: [["Kits", sec.growth.kits], ["E-mails", sec.growth.emails], ["Posts", sec.growth.posts], ["Landing pages", sec.growth.kits]],
-    sales: [["Anúncios ativos", sec.sales.listings_live], ["Manuais", sec.sales.listings_manual], ["Sem entrega", sec.sales.undelivered],
+    sales: [["Visitas 14d", (sec.sales.funnel || []).reduce((t, f) => t + f.views, 0)], ["Cliques comprar", (sec.sales.funnel || []).reduce((t, f) => t + f.clicks, 0)],
+      ["Visita→compra", (() => { const f = sec.sales.funnel || []; const v = f.reduce((t, x) => t + x.views, 0); const n = f.reduce((t, x) => t + x.sales, 0); return v ? `${(100 * n / v).toFixed(1)}%` : "—"; })()],
+      ["Anúncios ativos", sec.sales.listings_live], ["Manuais", sec.sales.listings_manual], ["Sem entrega", sec.sales.undelivered],
       ["Checkouts abandonados", (sec.sales.checkout || {}).abandoned || 0], ["E-mails de recuperação", (sec.sales.checkout || {}).recovery_emails || 0],
       ["Pagamentos recusados", (sec.sales.checkout || {}).failed || 0]],
     cfo: [["Lucro mês", usd(sec.cfo.profit_mtd)], ["Ritmo mês", usd(sec.cfo.revenue.run_rate)], ["Equilíbrio", `${sec.cfo.break_even.sales_needed} vendas`], ["IA hoje", `${sec.cfo.llm_calls_today}/${sec.cfo.llm_budget}`],
       ["Produtos parados 21d+", (sec.cfo.portfolio || []).filter((x) => ["reposition", "shutdown"].includes(x.health)).length],
-      ["Margem 30d (top)", Object.values(sec.cfo.topic_margins || {}).length ? usd(Math.max(...Object.values(sec.cfo.topic_margins))) : "—"]],
+      ["Margem 30d (top)", Object.values(sec.cfo.topic_margins || {}).length ? usd(Math.max(...Object.values(sec.cfo.topic_margins))) : "—"],
+      ["Runway", !sec.cfo.runway ? "—" : !sec.cfo.runway.cash_set ? "defina o caixa" : sec.cfo.runway.months !== null ? `${sec.cfo.runway.months} meses` : "sem queima"],
+      ["Infra/mês", sec.cfo.infra && sec.cfo.infra.month_usd !== undefined ? `${usd(sec.cfo.infra.month_usd)}${sec.cfo.infra.measured ? " (medido)" : " (estimado)"}` : "—"],
+      ["Austeridade", sec.cfo.infra && sec.cfo.infra.austerity ? "LIGADA" : "não"], ["LTV", usd((sec.cfo.ltv_cac || {}).ltv_usd || 0)],
+      ["CAC", (sec.cfo.ltv_cac || {}).organic_only ? "orgânico ($0)" : usd((sec.cfo.ltv_cac || {}).cac_usd || 0)],
+      ["Imposto+câmbio mês", usd(((sec.cfo.pnl_month || {}).tax_usd || 0) + ((sec.cfo.pnl_month || {}).fx_usd || 0))]],
   };
   for (const r of ROLES) {
     const a = AGENTS[r], info = summary.agents[r] || {};
@@ -428,7 +435,8 @@ function renderSectors(sec, summary, activity) {
     const ul = el("ul", "feed"); feeds[r] = ul;
     for (const e of activity.filter((x) => x.agent === r).slice(0, 8)) { const li = el("li"); li.append(el("time", "", hhmm(e.at)), document.createTextNode(e.text)); ul.append(li); }
     if (!ul.children.length) ul.append(el("li", "empty", "Sem atividade ainda."));
-    c.append(who, now, mini(pairs[r]));
+    const m = mini(pairs[r]); if (r === "sales" || r === "cfo") m.classList.add("one");
+    c.append(who, now, m);
     if (r === "product") { const f = el("div", "focus", "Foco da semana: "); f.append(el("b", "", sec.product.focus.join(", ") || "—")); c.append(f); }
     c.append(ul); root.append(c);
   }
@@ -478,7 +486,7 @@ const URG = { hair_on_fire: ["🔥 Hair on fire", "u-fire"], important: ["Import
 
 function renderIdeas(ideas) {
   const t = $("ideas"); t.replaceChildren();
-  const cols = ["Ideia", "Urgência", "Opp. /20", "WTP /10", "TTV", "Moat", "Distrib.", "Valor/mês", "Preço", "MVP", "Evidências", "Status"];
+  const cols = ["Ideia", "Urgência", "Opp. /20", "WTP /10", "TTV", "Fricção", "Paga?", "Moat", "Distrib.", "Valor/mês", "Preço", "MVP", "Evidências", "Status"];
   const hr = el("tr"); cols.forEach((h) => hr.append(el("th", "", h))); t.append(hr);
   if (!ideas.length) { const tr = el("tr"); const td = el("td", "empty", "Nenhuma ideia ainda: a primeira pesquisa roda quando o escritório liga."); td.colSpan = cols.length; tr.append(td); t.append(tr); return; }
   const n = (v, d = 1) => (v === undefined || v === null ? "—" : Number(v).toFixed(d));
@@ -486,13 +494,16 @@ function renderIdeas(ideas) {
     const a = i.assessment || {}, tr = el("tr"); const ev = el("td");
     for (const e of (i.evidence || []).slice(0, 3)) { if (e.url) { const l = el("a", "", e.source); l.href = e.url; l.target = "_blank"; l.rel = "noopener"; l.title = e.title; ev.append(l, document.createTextNode(" ")); } else ev.append(document.createTextNode(`${e.source} `)); }
     const name = el("td"); name.append(el("strong", "", i.title), el("br"), el("span", "muted-xs", a.job_to_be_done || i.problem));
+    if (a.emotional_job) name.append(el("br"), el("span", "muted-xs", `❤ ${a.emotional_job}`));
     if (a.reasons && a.reasons.length && i.status === "rejected") name.append(el("br"), el("span", "muted-xs dec-rejected", a.reasons.join(" · ")));
     const [ul, uc] = URG[a.urgency] || ["—", ""];
     const ttv = el("td", `num ${a.ttv_minutes > 5 ? "dec-rejected" : ""}`, a.ttv_minutes ? `${a.ttv_minutes} min` : "—");
     const moat = el("td", `num ${a.commodity ? "dec-rejected" : ""}`, a.commodity ? "commodity" : n(a.moat, 0));
     const urg = el("td"); urg.append(el("span", `badge ${uc}`, ul));
     tr.append(name, urg, el("td", "num", n(a.opportunity)), el("td", "num", n(a.wtp)),
-      ttv, moat, el("td", "num", n(a.distribution, 0)),
+      ttv, el("td", `num ${a.friction > a.friction_tolerance ? "dec-rejected" : ""}`, a.friction !== undefined ? `${n(a.friction)}/${n(a.friction_tolerance)}` : "—"),
+      el("td", `num ${a.payer_habit < -0.3 ? "dec-rejected" : ""}`, a.payer_habit !== undefined ? (a.payer_habit >= 0 ? "+" : "") + n(a.payer_habit, 2) : "—"),
+      moat, el("td", "num", n(a.distribution, 0)),
       el("td", "num", a.value_month_low ? `${usd(a.value_month_low, 0)}–${usd(a.value_month_high, 0)}` : "—"),
       el("td", "num", usd(i.price_usd, 0)), el("td", "num", n(i.score, 0)), ev, el("td", `dec-${i.status}`, i.status));
     t.append(tr);

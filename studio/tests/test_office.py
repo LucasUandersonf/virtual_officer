@@ -74,7 +74,7 @@ async def test_sale_is_recorded_once_and_delivered(office):
     async with office.ctx.db.session() as s:
         assert len((await s.scalars(select(Sale))).all()) == 1
         assert (await s.scalars(select(Download))).first() is not None
-    assert sale.fee_cents == round(4900 * 0.029 + 30)
+    assert sale.fee_cents == round(4900 * (0.029 + 0.7 * 0.015) + 30)  # domestic + expected share of foreign cards
     await office.sales.record_sale(SaleEvent("stripe", "cs_1", 4900, "", "", refunded=True))
     assert (await finance.pnl(office.ctx.db, office.ctx.settings))["sales"] == 0
 
@@ -196,3 +196,48 @@ async def test_abandoned_checkout_gets_one_recovery_email_only_with_consent(offi
     assert await office.sales.checkout_signal(CheckoutSignal("abandoned", "cs_b", "x@y.co", "plink_r", True)) == "recovery email sent"
     assert await office.sales.checkout_signal(CheckoutSignal("abandoned", "cs_c", "x@y.co", "plink_r", True)) == "logged"
     assert sent == ["x@y.co"]
+
+
+async def test_refund_and_dispute_revoke_downloads(office):
+    await office.tick()
+    async with office.ctx.db.session() as s:
+        p = (await s.scalars(select(Product))).unique().first()
+        s.add(Listing(product_id=p.id, platform="stripe", external_id="plink_d", url="https://buy.stripe.com/d"))
+    sale = await office.sales.record_sale(SaleEvent("stripe", "cs_d", 4700, "b@c.co", "plink_d", payment_ref="pi_d"))
+    await office.sales.record_sale(SaleEvent("stripe", "pi_d", 4700, "", "", refunded=True, payment_ref="pi_d", disputed=True))
+    async with office.ctx.db.session() as s:
+        row = await s.get(Sale, sale.id)
+        d = (await s.scalars(select(Download).where(Download.sale_id == sale.id))).first()
+    assert row.refunded and row.disputed and d.count == d.max_count
+
+
+async def test_funnel_tracking_and_elasticity(office):
+    from app.models import FunnelDay
+
+    await office.tick()
+    async with office.ctx.db.session() as s:
+        p = (await s.scalars(select(Product))).unique().first()
+        p.status = "published"
+        s.add(Listing(product_id=p.id, platform="stripe", external_id="plink_f", url="https://buy.stripe.com/f"))
+        from app.models import utcnow
+        s.add(FunnelDay(product_id=p.id, day=utcnow().date(), views=300, clicks=40))
+    start_price = p.price_cents // 100
+    actions = await office.sales.funnel_review(office.growth)
+    assert actions and "price friction" in actions[0]["diagnosis"]
+    async with office.ctx.db.session() as s:
+        assert (await s.get(Product, p.id)).price_cents // 100 < start_price
+    again = await office.sales.funnel_review(office.growth)
+    assert "skipped" in again[0]["action"]  # one price change per 7 days
+
+
+async def test_cfo_runway_break_even_and_ltv(office, settings):
+    from app.services import finance
+
+    await office.tick()
+    g = await finance.goals(office.ctx.db, settings)
+    assert g["break_even"]["sales_needed"] >= 1 and not g["break_even"]["from_real_sales"]
+    assert g["runway"]["monthly_burn_usd"] > 0
+    lc = await finance.ltv_cac(office.ctx.db, settings)
+    assert lc["organic_only"] and lc["ltv_cac"] is None
+    st = await office.cfo.infra_control()
+    assert not st["measured"] and not st["austerity"] and office.ctx.llm.budget_factor == 1.0

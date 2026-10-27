@@ -18,6 +18,12 @@ TRIGGERS = {"webhook", "schedule"}
 EXTERNAL = {"http", "email", "slack", "sheets"}  # nodes that call another system: retried with backoff
 RETRY = {"retryOnFail": True, "maxTries": 3, "waitBetweenTries": 2000}
 GUARD_NAME = "Guard: Auth, Validate, Dedupe"
+ERROR_SET, ERROR_STOP = "Explain Failure", "Fail With Readable Error"
+# Self-healing: external nodes retry 3x with backoff; if a third-party API is still down, the item goes to an
+# error branch that writes a plain-English diagnosis and fails the execution visibly (other items keep going),
+# so the buyer sees *what* broke and *what to check* in the Executions list instead of a stack trace.
+ERROR_MESSAGE = ("={{ 'Step \"' + $json.failed_step + '\" could not complete: ' + ($json.error?.message || $json.error || 'unknown error') + "
+                 "'. Check its credential and the variables in .env.example, then retry this execution. Other items were processed.' }}")
 
 # Runs right after the webhook. Defensive by design: rejects calls without the shared secret (when
 # WEBHOOK_SECRET is set), drops payloads missing required fields, and drops deliveries already seen
@@ -138,7 +144,21 @@ def build_workflow(name: str, slug: str, steps: list[dict[str, Any]], guide: str
             src = f"$('{nm}').item.json.body"
         elif st["kind"] in ("set", "code"):
             src = f"$('{nm}').item.json"
-    connections = {a: {"main": [[{"node": b, "type": "main", "index": 0}]]} for a, b in zip(names, names[1:], strict=False)}
+    connections: dict[str, Any] = {a: {"main": [[{"node": b, "type": "main", "index": 0}]]} for a, b in zip(names, names[1:], strict=False)}
+    external = [n for n in nodes if n.get("retryOnFail")]
+    if external:
+        y = 260
+        nodes.append({"id": _uid(), "name": ERROR_SET, "type": "n8n-nodes-base.set", "typeVersion": 3.4, "position": [480, y],
+                      "parameters": {"assignments": {"assignments": [
+                          {"id": _uid(), "name": "failed_step", "value": "={{ $prevNode.name }}", "type": "string"}]},
+                          "includeOtherFields": True, "options": {}}})
+        nodes.append({"id": _uid(), "name": ERROR_STOP, "type": "n8n-nodes-base.stopAndError", "typeVersion": 1, "position": [720, y],
+                      "parameters": {"errorMessage": ERROR_MESSAGE}})
+        connections[ERROR_SET] = {"main": [[{"node": ERROR_STOP, "type": "main", "index": 0}]]}
+        for n in external:
+            n["onError"] = "continueErrorOutput"
+            out = connections.setdefault(n["name"], {"main": [[]]})["main"]
+            out.append([{"node": ERROR_SET, "type": "main", "index": 0}])
     return {"name": name, "nodes": nodes, "connections": connections, "active": False,
             "settings": {"executionOrder": "v1"}, "pinData": {}, "meta": {"templateCredsSetupCompleted": False}}
 
@@ -161,8 +181,13 @@ def validate_workflow(wf: dict[str, Any]) -> dict[str, Any]:
     check("every node typed", all(n.get("type", "").startswith("n8n-nodes-base.") and n.get("typeVersion") for n in nodes))
     targets = [c["node"] for v in wf.get("connections", {}).values() for out in v.get("main", []) for c in out]
     check("connections resolve", all(t in names for t in targets) and all(k in names for k in wf.get("connections", {})))
-    work = [n for n in nodes if n.get("type") != "n8n-nodes-base.stickyNote"]
-    check("all steps connected", len(targets) == len(work) - 1, f"{len(targets)} links for {len(work)} steps")
+    triggers = ("n8n-nodes-base.webhook", "n8n-nodes-base.scheduleTrigger", "n8n-nodes-base.stickyNote")
+    orphans = [n["name"] for n in nodes if n.get("type") not in triggers and n["name"] not in targets]
+    check("all steps connected", not orphans, ", ".join(orphans))
+    ext_nodes = [n for n in nodes if n.get("retryOnFail")]
+    check("self-healing: failures go to a readable error branch",
+          all(n.get("onError") == "continueErrorOutput" and len(wf["connections"].get(n["name"], {}).get("main", [])) == 2
+              for n in ext_nodes), f"{len(ext_nodes)} external nodes")
     codes = [n["parameters"].get("jsCode", "") for n in nodes if n.get("type") == "n8n-nodes-base.code"]
     check("code nodes balanced", all(c.count("{") == c.count("}") and c.count("(") == c.count(")") for c in codes))
     has_webhook = any(n.get("type") == "n8n-nodes-base.webhook" for n in nodes)

@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.agents.base import Agent
+from app.integrations import railway
 from app.integrations.payments import estimate_fee
 from app.models import Idea, Product, Sale, utcnow
 from app.services import finance
@@ -123,19 +124,50 @@ class CFO(Agent):
         await self.ctx.db.set_state("portfolio", {"repositioned": sorted(repositioned)})
         return flagged
 
+    async def topic_roi(self, days: int = 30) -> dict[str, float]:
+        """ROI per topic = 30-day contribution / the office cost its live products absorbed in that window."""
+        margins = await self.topic_margins(days)
+        async with self.ctx.db.session() as ses:
+            live = dict((await ses.execute(select(Idea.topic, func.count(Product.id)).join(Product, Product.idea_id == Idea.id)
+                                           .where(Product.status == "published").group_by(Idea.topic))).all())
+        total_live = sum(live.values()) or 1
+        share = self.ctx.settings.monthly_fixed_costs_usd * days / 30 / total_live
+        return {t: round(m / (share * max(live.get(t, 1), 1)), 2) if share else m for t, m in margins.items()}
+
+    async def infra_control(self) -> dict[str, Any]:
+        """Runway & cost control: measure Railway when possible; above INFRA_BUDGET_USD switch to austerity."""
+        s = self.ctx.settings
+        usage = await railway.estimated_month_usd(s, self.ctx.http)
+        month = usage["estimated_month_usd"] + s.other_monthly_usd if usage else s.monthly_fixed_costs_usd
+        austerity = month > s.infra_budget_usd
+        self.ctx.llm.budget_factor = 0.5 if austerity else 1.0
+        st = {"measured": bool(usage), "month_usd": round(month, 2), "budget_usd": s.infra_budget_usd, "austerity": austerity,
+              "usage": usage}
+        prev = await self.ctx.db.get_state("infra")
+        await self.ctx.db.set_state("infra", st)
+        if austerity and not prev.get("austerity"):
+            await self.log("austerity", f"Infra ${month:.2f}/month > budget ${s.infra_budget_usd:.2f}: LLM calls halved, research every "
+                                        f"{s.research_interval_min * 2} min")
+            await self.ctx.notify.ceo(f"💸 Austerity on: infrastructure ${month:.2f}/month is above the ${s.infra_budget_usd:.2f} budget.")
+        return st
+
     async def daily_close(self, growth: Any = None, sales: Any = None) -> dict[str, object]:
         s = self.ctx.settings
-        await finance.accrue_costs(self.ctx.db, s)
         state = await self.ctx.db.get_state("cfo")
         today = date.today().isoformat()
         if state.get("last_close") == today:
+            await finance.accrue_costs(self.ctx.db, s)
             return state
+        infra = await self.infra_control()
+        railway_month = infra["usage"]["estimated_month_usd"] if infra.get("usage") else None
+        await finance.accrue_costs(self.ctx.db, s, railway_month_usd=railway_month)
         total = await finance.pnl(self.ctx.db, s)
         mtd = await finance.pnl(self.ctx.db, s, date.today().replace(day=1))
         margin = f"{mtd['net_revenue_usd'] / mtd['gross_usd']:.0%}" if mtd["gross_usd"] else "n/a, no sales yet"
         text = (f"Daily close — MTD gross ${mtd['gross_usd']:.2f} − fees ${mtd['fees_usd']:.2f} − infra ${mtd['costs_usd']:.2f} "
                 f"= profit ${mtd['profit_usd']:.2f} (contribution margin {margin}) · all-time ${total['profit_usd']:.2f} · "
-                f"Railway ≈ ${s.railway_monthly_usd:.2f}/month")
+                f"Railway ≈ ${railway_month if railway_month is not None else s.railway_monthly_usd:.2f}/month"
+                f"{' (measured)' if railway_month is not None else ' (estimate)'}")
         await self.log("close", text, mtd=mtd)
         flagged = await self.audit(growth, sales)
         if state.get("last_close"):  # skip the alert on the very first boot
