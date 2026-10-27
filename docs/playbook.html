@@ -266,6 +266,26 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </table></div>
   </section>
 
+  <section aria-labelledby="h-relogio">
+    <span class="eyebrow">Sazonalidade intradiária · 33 moedas · 2022–2026</span>
+    <h2 id="h-relogio">O relógio do mercado</h2>
+    <p>Cada hora, dia da semana e movimento foi medido em dois períodos separados (2022-01 a 2023-06 e 2023-07 a hoje). Um padrão só conta se aparecer igual nos dois e com força estatística. Horários em Brasília.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Pergunta</th><th>Resposta dos dados</th><th>Uso pelo time</th></tr></thead>
+      <tbody>
+        <tr><td>Existe hora do dia em que o preço sobe ou cai?</td><td><b>Não.</b> Nenhuma das 24 horas se repetiu nos dois períodos. Todas ficam entre 47% e 54% de chance de subir.</td><td>Não operar por horário.</td></tr>
+        <tr><td>Existe dia da semana bom ou ruim?</td><td><b>Não.</b> Terça foi a melhor no 1º período e a pior no 2º. Quinta caiu nos dois, mas sem força estatística.</td><td>Ignorar “dia bom para comprar”.</td></tr>
+        <tr><td>Combinação dia × hora (168 células)?</td><td><b>Nenhuma</b> estável.</td><td>—</td></tr>
+        <tr><td>Quando o mercado se mexe mais?</td><td><b>Sim, isso se repete.</b> Sessão dos EUA (11h–18h): amplitude de 1,5–1,8% por hora e volume 1,35–1,54× o normal, com pico às 11h. Madrugada (00h–03h): 1,2% e volume 0,84×. Fim de semana: amplitude ~20% menor.</td><td>Stops apertados morrem às 10h–13h. Rompimentos ganham força nesse horário. Ordens limitadas pegam melhor preço de madrugada.</td></tr>
+        <tr><td>Depois de uma queda forte em 1h?</td><td>Volta a subir na hora seguinte em 56% das vezes (161 por mês), mas o ganho médio troca de sinal entre os períodos.</td><td>Não vender no pânico; não é sinal de compra sozinho.</td></tr>
+        <tr><td>Clímax de venda (queda + volume + vendedores agressivos)?</td><td>Repique de 55–56% em 1–4h no geral, instável entre períodos e menor que o custo.</td><td>Confirmação, nunca gatilho.</td></tr>
+        <tr><td>As primeiras 4h do dia (21h–01h) antecipam o resto?</td><td><b>Não.</b> Depois de um começo em alta ou em queda, o resto do dia sobe em 48% das vezes.</td><td>Ignorar “como o dia abriu”.</td></tr>
+        <tr><td>Horários de funding (21h, 05h, 13h)?</td><td>Sem efeito na direção do preço.</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>Conclusão:</b> o relógio diz <b>quando</b> o mercado se mexe, mas não <b>para onde</b>. Qualquer efeito de direção encontrado tem menos de 0,1% por hora, contra 0,30% de custo por operação.</p>
+  </section>
+
   <section aria-labelledby="h-roteador">
     <span class="eyebrow">Teste da regra de ouro</span>
     <h2 id="h-roteador">Roteador por regime</h2>
