@@ -118,6 +118,9 @@ class RiskRules:
     loss_streak_lock: int = 2
     lock_hours: float = 24.0
     min_notional: float = 5.0
+    # Dynamic sizing: halve risk while equity sits more than ``dd_throttle`` below its peak (None = off).
+    # Per-trade scaling (e.g. volatility targeting) comes from an optional ``risk_mult`` trade column.
+    dd_throttle: float | None = None
 
 
 @dataclass
@@ -146,16 +149,19 @@ def simulate_portfolio(trades: pd.DataFrame, rules: RiskRules, costs: Costs,
     day_pnl: dict[object, float] = {}
     day_start_eq: dict[object, float] = {}
     events: list[tuple[pd.Timestamp, float]] = []
+    peak = equity
+    has_mult = "risk_mult" in t.columns
     taken: list[tuple[str, pd.Timestamp, pd.Timestamp, float, float, float]] = []
     skipped = 0
     seq = 0
 
     def close_until(ts: pd.Timestamp) -> None:
-        nonlocal equity, committed, streak, lock_until
+        nonlocal equity, committed, streak, lock_until, peak
         while open_heap and open_heap[0][0] <= ts:
             t_out, _, notional, ret, coin = heapq.heappop(open_heap)
             pnl = notional * ret
             equity += pnl
+            peak = max(peak, equity)
             committed -= notional
             open_coins.discard(coin)
             events.append((t_out, equity))
@@ -179,7 +185,10 @@ def simulate_portfolio(trades: pd.DataFrame, rules: RiskRules, costs: Costs,
             skipped += 1
             continue
         loss_per_unit = row.stop_pct + costs.round_trip
-        notional = min(equity * rules.risk_per_trade / loss_per_unit, equity - committed)
+        mult = float(row.risk_mult) if has_mult else 1.0
+        if rules.dd_throttle is not None and equity < peak * (1 - rules.dd_throttle):
+            mult *= 0.5
+        notional = min(equity * rules.risk_per_trade * mult / loss_per_unit, equity - committed)
         if notional < rules.min_notional or equity <= 0:
             skipped += 1
             continue

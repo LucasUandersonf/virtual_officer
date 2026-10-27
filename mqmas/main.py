@@ -117,14 +117,8 @@ def _research_root(s: Settings) -> Path:
 
 async def _research_once(s: Settings) -> None:
     """Spawn the research lab in its own process (keeps the trading loop's GIL free)."""
-    from mqmas.research.lab import VERSION
-
-    report = _research_root(s) / "report.json"
-    if report.exists() and json.loads(report.read_text()).get("version") == VERSION:
-        log.info("research report v%s already present; skipping", VERSION)
-        return
-    log.info("starting research lab subprocess")
-    proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "mqmas.research", str(_research_root(s)))
+    log.info("starting research lab subprocess (runs only the labs whose report is missing or outdated)")
+    proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "mqmas.research", str(_research_root(s)), "all")
     code = await proc.wait()
     log.info("research lab finished with exit code %s", code)
 
@@ -193,6 +187,17 @@ async def research_report() -> dict[str, Any]:
     from mqmas.research.lab import summarize
 
     path = _research_root(_rt().settings) / "report.json"
+    if not path.exists():
+        return {"ready": False}
+    report = json.loads(path.read_text())
+    return {"ready": True, "summary": summarize(report), "report": report}
+
+
+@app.get("/api/research/swing")
+async def research_swing() -> dict[str, Any]:
+    from mqmas.research.swing import summarize
+
+    path = _research_root(_rt().settings) / "swing_report.json"
     if not path.exists():
         return {"ready": False}
     report = json.loads(path.read_text())
