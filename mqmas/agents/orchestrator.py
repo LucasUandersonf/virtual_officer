@@ -47,6 +47,8 @@ from mqmas.quant.evidence import BacktestResult, compute_setup_stats
 from mqmas.quant.pipeline import QuantPipeline
 from mqmas.quant.sizing import build_sizing_plan
 from mqmas.risk.constraints import RiskManager
+from mqmas.ta.live import compact
+from mqmas.ta.live import report as ta_report
 from mqmas.ws.hub import WebSocketHub
 
 log = logging.getLogger(__name__)
@@ -104,6 +106,15 @@ class Orchestrator:
         equity = await self._risk.equity_estimate()
         plan = build_sizing_plan(equity, snap.orderbook.best_ask, stop_pct, tp_pct, stats.kelly_applied, s)
         return stats, plan
+
+    def _technical(self) -> dict[str, Any]:
+        """Compact technical report of the desk symbol on its own timeframe (closed candles only)."""
+        try:
+            df = self._feed.candles().iloc[:-1][["open", "high", "low", "close", "volume"]]
+            return compact(ta_report(df, self._s.timeframe, self._s.db_path.parent / "research"))
+        except Exception:
+            log.exception("technical analysis failed")
+            return {}
 
     async def _memory(self) -> list[dict[str, Any]]:
         closed = await self._db.closed_positions(self._s.trading_mode.value, limit=10)
@@ -216,7 +227,8 @@ class Orchestrator:
             return empty
 
         # 1. Chief Quant — Tree of Thoughts over the fired setups
-        _, msg = await self.chief.deliberate(debate_id, snap, await self._db.recent_debates(5), fired)
+        _, msg = await self.chief.deliberate(debate_id, snap, await self._db.recent_debates(5), fired,
+                                             await asyncio.to_thread(self._technical))
         votes[AgentRole.CHIEF_QUANT.value] = msg.vote or Vote.ABSTAIN
         await self._say(msg)
         decision: Decision | None = None

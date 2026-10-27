@@ -235,3 +235,10 @@ a { color: var(--accent-2); } a:hover { color: #D6D0FF; }
 .lg-badge { padding: 1px 7px; border-radius: 6px; font-size: 10px; font-weight: 700; }
 .lg-badge.ok { background: rgba(74, 222, 157, .15); color: var(--good); }
 .lg-badge.no { background: rgba(255, 138, 128, .12); color: var(--bad); }
+
+/* ------------------------------------------------------------------ technical analysis */
+.ta-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ta-cell { background: var(--tile); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ta-cell span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.ta-cell strong { font-size: 13px; overflow-wrap: anywhere; }
+.lg-badge.mid { background: rgba(251, 193, 94, .14); color: var(--warn); }

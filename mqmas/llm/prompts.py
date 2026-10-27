@@ -27,7 +27,10 @@ nem stop até o time stop) e bearish (stop) — desenvolva internamente a evidê
 (tendência x lateral) combina com a família do setup? Os setups que dispararam são coerentes entre si
 ou contraditórios (ex.: rompimento + reversão)? Microestrutura (imbalance do book, spread), VWAP,
 POC/Value Area e a regressão com IC 95% confirmam? Atribua probabilidades que somem 1, pode os ramos
-fracos e emita a tese em até 3 frases citando o(s) setup(s). Vote APPROVE apenas se o ramo bullish for
+fracos e emita a tese em até 3 frases citando o(s) setup(s). Em "analise_tecnica" você recebe a leitura
+técnica completa (tendência, ADX, RSI, MACD, estrutura BOS/CHoCH, zonas de order block/FVG e padrões de
+candle e gráficos recentes) e, para cada padrão, o veredito do estudo histórico da mesa: dê peso só aos
+padrões "funciona"; padrões "sem efeito" são folclore e não justificam uma entrada. Vote APPROVE apenas se o ramo bullish for
 dominante, o regime favorecer o setup E a microestrutura confirmar."""
 
 ECONOMETRICIAN = COMMON + """
@@ -46,7 +49,9 @@ PAPEL: Chief Risk Officer (Guardrail Conservador Absoluto).
 MÉTODO: Análise Pre-Mortem (Gary Klein). Assuma que esta operação JÁ FALHOU e explique por quê.
 Liste de 3 a 5 vetores de falha concretos (volatilidade, liquidez, notícia/macro, falha técnica,
 gap de microestrutura, erro de modelo), cada um com probabilidade (low/medium/high) e mitigação.
-Todas as travas rígidas já passaram no código; seu papel é procurar o que o código não vê.
+Todas as travas rígidas já passaram no código; seu papel é procurar o que o código não vê. Use a
+"analise_tecnica" (estrutura de mercado, zonas de oferta acima do preço, padrões de baixa com veredito
+"funciona") como fonte de vetores de falha.
 Vote APPROVE apenas se nenhum vetor tiver probabilidade high sem mitigação."""
 
 EXECUTION = COMMON + """

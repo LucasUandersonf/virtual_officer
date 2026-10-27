@@ -52,6 +52,8 @@ from mqmas.research.strategies import (
     relative_strength,
 )
 from mqmas.risk.constraints import RiskManager
+from mqmas.ta.live import compact
+from mqmas.ta.live import report as ta_report
 from mqmas.ws.hub import WebSocketHub
 
 log = logging.getLogger(__name__)
@@ -71,6 +73,7 @@ class Signal:
     atr: float
     rs: float
     layers: dict[str, Any]
+    ta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -201,7 +204,8 @@ class StrategyBook:
                                                "volume_x": round(float(last["volume"] / last["vol20"]), 2)
                                                if last["vol20"] else None,
                                                "rsi14": round(float(last["rsi14"]), 1),
-                                               "atr_pct": round(float(last["atr"] / last["close"]) * 100, 2)}))
+                                               "atr_pct": round(float(last["atr"] / last["close"]) * 100, 2)},
+                                              self._ta(df, tf)))
             self.state.last_eval[tf] = self._due(tf, now_ms) or self.state.last_eval.get(tf, 0)
         signals.sort(key=lambda x: x.rs, reverse=True)
         stale = [tf for tf in due if now_ms - self.state.last_eval.get(tf, 0) > min(TF_MS[tf] // 6, MAX_SIGNAL_LAG_MS)]
@@ -217,10 +221,17 @@ class StrategyBook:
 
     # ------------------------------------------------------------------ entries
 
+    def _ta(self, df: pd.DataFrame, tf: str) -> dict[str, Any]:
+        try:
+            return compact(ta_report(df[["open", "high", "low", "close", "volume"]], tf, self._s.db_path.parent / "research"))
+        except Exception:
+            log.exception("book: technical analysis failed")
+            return {}
+
     async def _cro_veto(self, sig: Signal, cfg: Config, stop: float, target: float) -> tuple[bool, str, str]:
         payload = {"ativo": sig.symbol, "setup": short_name(cfg), "preco": sig.price,
                    "stop": round(stop, 8), "alvo": round(target, 8), "camadas_confluencia": sig.layers,
-                   "regime_btc_ok": self.state.btc_regime_ok,
+                   "regime_btc_ok": self.state.btc_regime_ok, "analise_tecnica": sig.ta,
                    "evidencia": "aprovado no walk-forward 2023-07→2026-10: PF 2,29, acerto 56%, DD 2,9%"}
         res = await self.cro.ask(payload, CroOpinion)
         if res is None:

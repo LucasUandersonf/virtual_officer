@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -202,6 +203,35 @@ async def research_swing() -> dict[str, Any]:
         return {"ready": False}
     report = json.loads(path.read_text())
     return {"ready": True, "summary": summarize(report), "report": report}
+
+
+@app.get("/api/ta/{base}")
+async def technical_analysis(base: str, tf: str = "4h", quote: str = "USDT") -> dict[str, Any]:
+    """Full technical report of BASE/QUOTE on ``tf`` (closed candles), annotated with the historical study."""
+    from mqmas.ta.live import report as ta_report
+
+    rt = _rt()
+    if tf not in ("1h", "4h", "1d"):
+        raise HTTPException(400, "tf must be 1h, 4h or 1d")
+    ex = rt.feed.exchange
+    if ex is None:
+        raise HTTPException(503, "no exchange connection (synthetic feed)")
+    symbol = f"{base.upper()}/{quote.upper()}"
+    rows = await ex.fetch_ohlcv(symbol, tf, limit=400)
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df.index = pd.to_datetime(df.pop("ts").astype("int64"), unit="ms", utc=True)
+    rep = await asyncio.to_thread(ta_report, df.iloc[:-1].astype(float), tf, _research_root(rt.settings))
+    return {"symbol": symbol, "tf": tf, **rep}
+
+
+@app.get("/api/ta-study")
+async def ta_study_report() -> dict[str, Any]:
+    path = _research_root(_rt().settings) / "ta_report.json"
+    if not path.exists():
+        return {"ready": False}
+    rep = json.loads(path.read_text())
+    return {"ready": True, "rows": [{k: r[k] for k in ("padrao", "tf", "categoria", "vies", "ocorrencias", "veredito",
+                                                         "operacao")} for r in rep["rows"]]}
 
 
 @app.get("/api/research/season")

@@ -392,6 +392,39 @@ async function loadBook() {
   try { const r = await fetch("/api/book"); if (r.ok) renderBook(await r.json()); } catch (e) { /* retry on next event */ }
 }
 
+// ===================================================================== technical analysis
+const VERDICT_CLASS = { "funciona": "ok", "funciona ao contrário": "mid", "direção certa, não paga custos": "mid", "sem efeito": "no" };
+
+function renderTA(r) {
+  const t = r.tendencia, m = r.momento, v = r.volatilidade, s = r.estrutura;
+  $("ta-sub").textContent = `${new Date().toLocaleTimeString("pt-BR")} · saldo de confluência ${r.confluencia.saldo >= 0 ? "+" : ""}${r.confluencia.saldo}`;
+  const cells = [
+    ["Tendência", `${t.vies} · ADX ${t.adx ?? "—"}`], ["Estrutura", s.tendencia_smc], ["RSI", m.rsi ?? "—"],
+    ["MACD hist", m.macd_hist === null ? "—" : (m.macd_hist >= 0 ? "positivo" : "negativo")],
+    ["Bollinger", `${v.posicao_bollinger}${v.squeeze_ttm ? " · squeeze" : ""}`], ["ATR", `${v.atr_pct ?? "—"}%`],
+  ];
+  const grid = $("ta-grid");
+  grid.replaceChildren(...cells.map(([k, val]) => { const d = el("div", "ta-cell"); d.append(el("span", "", k), el("strong", "", String(val))); return d; }));
+  const list = $("ta-pats");
+  const pats = [...r.padroes_recentes.alta.map((p) => [p, "alta"]), ...r.padroes_recentes.baixa.map((p) => [p, "baixa"])];
+  list.replaceChildren();
+  if (!pats.length) { list.append(el("li", "muted-sm", "Nenhum padrão nos últimos 3 candles de 4h.")); return; }
+  for (const [p, side] of pats) {
+    const li = el("li", "lg-row");
+    const name = el("div", "lg-name");
+    const title = el("strong", "", p.padrao.replaceAll("_", " "));
+    const h = p.historico;
+    title.append(el("span", `lg-badge ${h ? VERDICT_CLASS[h.veredito] || "no" : "mid"}`, h ? h.veredito : "sem estudo"));
+    name.append(title, el("span", "", `${p.categoria} · viés de ${side}` + (h ? ` · acerto histórico ${(h.acerto * 100).toFixed(0)}%` : "")));
+    li.append(el("span", `lg-rank mono ${side === "alta" ? "pos" : "neg"}`, side === "alta" ? "▲" : "▼"), name);
+    list.append(li);
+  }
+}
+
+async function loadTA() {
+  try { const r = await fetch("/api/ta/BTC?tf=4h"); if (r.ok) renderTA(await r.json()); } catch (e) { /* next tick */ }
+}
+
 // ===================================================================== websocket
 function handle(ev) {
   const p = ev.payload;
@@ -534,6 +567,8 @@ async function boot() {
   connect();
   loadLeague();
   loadBook();
+  loadTA();
+  setInterval(loadTA, 5 * 60 * 1000);
   setInterval(() => { tickTimer(); tickAge(); }, 1000);
 }
 boot();

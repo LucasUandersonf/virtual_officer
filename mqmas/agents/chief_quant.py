@@ -34,9 +34,11 @@ class ChiefQuant(Agent):
 
     async def deliberate(self, debate_id: str, snap: QuantSnapshot,
                          recent_debates: list[dict[str, Any]],
-                         fired: list[FiredSetup] | None = None) -> tuple[ChiefQuantOpinion | None, AgentMessage]:
+                         fired: list[FiredSetup] | None = None,
+                         technical: dict[str, Any] | None = None) -> tuple[ChiefQuantOpinion | None, AgentMessage]:
         res = await self.ask({"snapshot": snapshot_brief(snap), "setups_disparados": setups_brief(fired or []),
-                              "ultimos_debates": recent_debates[:5]}, ChiefQuantOpinion)
+                              "analise_tecnica": technical or {}, "ultimos_debates": recent_debates[:5]},
+                             ChiefQuantOpinion)
         if res is None:
             return None, self.abstain(debate_id)
         op, meta = res
