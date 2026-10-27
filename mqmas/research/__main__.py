@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|all]`` — run the labs whose report is missing or outdated."""
+"""``python -m mqmas.research [root] [lab|swing|season|all]`` — run the labs whose report is missing or outdated."""
 
 from __future__ import annotations
 
@@ -40,6 +40,16 @@ def main() -> None:
             for line in swing.summarize(rep):
                 log.info(line)
             log.info("swing report saved to %s", path)
+    if which in ("season", "all"):
+        from mqmas.research import seasonality
+
+        path = root / "season_report.json"
+        if which == "season" or not _current(path, seasonality.VERSION):
+            rep = seasonality.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in seasonality.summarize(rep):
+                log.info(line)
+            log.info("seasonality report saved to %s", path)
 
 
 if __name__ == "__main__":

@@ -204,6 +204,14 @@ async def research_swing() -> dict[str, Any]:
     return {"ready": True, "summary": summarize(report), "report": report}
 
 
+@app.get("/api/research/season")
+async def research_season() -> dict[str, Any]:
+    path = _research_root(_rt().settings) / "season_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.post("/api/kill-switch")
 async def kill_switch(engage: bool = True, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     rt = _rt()
