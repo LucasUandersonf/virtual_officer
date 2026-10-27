@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from mqmas.research.data import candidate_pool, load_history
+from mqmas.research.data import candidate_pool, load_history, research_exchange
 from mqmas.research.engine import Costs
 from mqmas.research.templates import dca_benchmark
 from mqmas.trend.model import CRASH_STOP_ATR, MIN_HISTORY, TrendParams, atr, eligibility, weights_frame
@@ -216,10 +216,7 @@ class TrendStudy:
         self.root = root
 
     def load(self, ex: Any = None) -> dict[str, pd.DataFrame]:
-        if ex is None:
-            import ccxt
-
-            ex = ccxt.binance({"enableRateLimit": True, "options": {"defaultType": "spot"}})
+        ex = ex if ex is not None else research_exchange()
         pool = candidate_pool(ex, POOL_SIZE)
         log.info("trend pool (%d): %s", len(pool), ", ".join(pool))
         since = int(HISTORY_START.timestamp() * 1000)

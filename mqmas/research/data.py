@@ -10,6 +10,7 @@ volatility only.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -28,6 +29,24 @@ EXCLUDED_BASES = {
     "RWUSD",
 }
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
+
+
+PUBLIC_DATA_URL = "https://data-api.binance.vision/api/v3"
+
+
+def research_exchange() -> object:
+    """Binance spot client for market data only.
+
+    With ``MQMAS_PUBLIC_DATA=1`` it reads Binance's public market-data mirror instead of api.binance.com,
+    which refuses some regions (GitHub's runners, for one). Candles and tickers are identical.
+    """
+    import ccxt
+
+    ex = ccxt.binance({"enableRateLimit": True,
+                       "options": {"defaultType": "spot", "fetchMarkets": {"types": ["spot"]}}})
+    if os.environ.get("MQMAS_PUBLIC_DATA") == "1":
+        ex.urls["api"]["public"] = PUBLIC_DATA_URL
+    return ex
 
 
 def is_crypto(base: str) -> bool:
