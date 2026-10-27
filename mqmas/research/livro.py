@@ -13,7 +13,8 @@ Trade management, identical for every strategy (``managed_trades``):
   only upwards;
 * target — the pattern's measured move (height added to the breakout) when the strategy has one, or
   none (the trailing stop rides the trend); both variants are tested;
-* exits — any bearish pattern of the library, the model's own sell signal, or the time stop.
+* exits — the time stop, and (one variant) any bearish pattern of the library plus the model's own sell
+  signal; the other variant leaves the exit entirely to stop / breakeven / trailing.
 
 The confluence study tests, on the same data: every strategy alone, every pair (B confirming A within
 3 candles), "at least k distinct strategies in 3 candles", each with and without the macro gate.
@@ -40,7 +41,7 @@ from mqmas.ta.structure import pivots, structure_events
 
 log = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2
 CONFIRM = 3  # candles within which a confluence partner must also have fired
 HOLD = {"1d": 40, "4h": 90}  # time stop: 40 days / 15 days
 WINDOW = 60  # look-back of the rounding patterns
@@ -262,9 +263,11 @@ def candidates() -> list[dict[str, Any]]:
             for kmin in (2, 3):
                 out.append({"tipo": f"≥{kmin} estratégias", "tf": tf, "membros": tuple(LONGS), "kmin": kmin,
                             "macro": macro, "alvo": False})
+    out = [{**c, "saida_padrao": sp} for c in out for sp in (True, False)]
     for cand in out:
         who = "todas" if cand["tipo"].startswith("≥") else "+".join(cand["membros"])
-        cand["key"] = f"{cand['tf']}|{cand['tipo']}|{who}|macro={cand['macro']}|alvo={cand['alvo']}"
+        cand["key"] = (f"{cand['tf']}|{cand['tipo']}|{who}|macro={cand['macro']}|alvo={cand['alvo']}"
+                       f"|saida_padrao={cand['saida_padrao']}")
     return out
 
 
@@ -320,7 +323,8 @@ def build_tables(lab: Lab, costs: Costs) -> dict[str, pd.DataFrame]:
                 for m in members:
                     if m in OWN_EXIT:
                         own |= ev[OWN_EXIT[m]].to_numpy()
-                t = managed_trades(o, h, lo, c, a, ent, stop, tgt if cand["alvo"] else None, exits_any | own,
+                ex_sig = exits_any | own if cand["saida_padrao"] else np.zeros(len(df), dtype=bool)
+                t = managed_trades(o, h, lo, c, a, ent, stop, tgt if cand["alvo"] else None, ex_sig,
                                    Costs(costs.fee, costs.slippage), HOLD[tf])
                 if t["entry"].size:
                     rows[cand["key"]].append(pd.DataFrame({
@@ -349,6 +353,26 @@ def _stats(tr: pd.DataFrame) -> dict[str, Any]:
                                                                    for k, v in reasons.items()}}
 
 
+ACCOUNTS = {"US$50 risco 1,5% 3 posições": RiskRules(equity0=50.0, risk_per_trade=0.015),
+            "US$50 risco 1,5% 5 posições": RiskRules(equity0=50.0, risk_per_trade=0.015, max_positions=5),
+            "US$50 risco 1,0% 5 posições": RiskRules(equity0=50.0, risk_per_trade=0.01, max_positions=5),
+            "US$120 risco 1,0% 5 posições": RiskRules(equity0=120.0, risk_per_trade=0.01, max_positions=5)}
+
+
+def account(tr: pd.DataFrame, rules: RiskRules, costs: Costs, start: pd.Timestamp, end: pd.Timestamp) -> dict[str, Any]:
+    res = simulate_portfolio(tr, rules, costs, start, end)
+    m = res.metrics
+    monthly = equity_monthly(res.equity, rules.equity0, end)
+    weeks = max((end - start).days / 7, 1e-9)
+    return {"trades": int(m["trades"]), "por_semana": round(m["trades"] / weeks, 2), "pf": round(m["profit_factor"], 2),
+            "lucro_usd": round(m["total_return"] * rules.equity0, 2),
+            "media_mensal_pct": round(float(monthly.mean()) * 100, 2) if len(monthly) else None,
+            "mediana_mensal_pct": round(float(monthly.median()) * 100, 2) if len(monthly) else None,
+            "meses_positivos": round(float((monthly > 0).mean()), 2) if len(monthly) else None,
+            "meses_acima_de_2pct": round(float((monthly >= 0.02).mean()), 2) if len(monthly) else None,
+            "max_dd": round(m["max_drawdown"], 4), "monte_carlo": monte_carlo(monthly)}
+
+
 def run(root: Path, ex: Any = None) -> dict[str, Any]:
     lab = Lab(root)
     lab.load(ex)
@@ -370,35 +394,28 @@ def run(root: Path, ex: Any = None) -> dict[str, Any]:
     picks = [{"janela": p["window"], "setup": p["config"], "t_treino": round(p["train_tstat"], 2)} for p in wf["picks"]]
     accounts: dict[str, Any] = {}
     if oos is not None and len(oos):
-        for label, rules in {"US$50 risco 1,5% 3 posições": RiskRules(equity0=50.0, risk_per_trade=0.015),
-                             "US$50 risco 2,0% 4 posições": RiskRules(equity0=50.0, risk_per_trade=0.02, max_positions=4),
-                             "US$120 risco 1,0% 4 posições": RiskRules(equity0=120.0, risk_per_trade=0.01,
-                                                                       max_positions=4)}.items():
-            res = simulate_portfolio(oos, rules, costs, split, lab.end)
-            m = res.metrics
-            monthly = equity_monthly(res.equity, rules.equity0, lab.end)
-            accounts[label] = {"trades": int(m["trades"]), "pf": round(m["profit_factor"], 2),
-                               "lucro_usd": round(m["total_return"] * rules.equity0, 2),
-                               "media_mensal_pct": round(float(monthly.mean()) * 100, 2) if len(monthly) else None,
-                               "mediana_mensal_pct": round(float(monthly.median()) * 100, 2) if len(monthly) else None,
-                               "meses_positivos": round(float((monthly > 0).mean()), 2) if len(monthly) else None,
-                               "meses_acima_de_2pct": round(float((monthly >= 0.02).mean()), 2) if len(monthly) else None,
-                               "max_dd": round(m["max_drawdown"], 4), "monte_carlo": monte_carlo(monthly)}
+        accounts = {label: account(oos, rules, costs, split, lab.end) for label, rules in ACCOUNTS.items()}
         sr = simulate_portfolio(oos, lab.rules, costs, split, lab.end).metrics
         dsr = deflated_sharpe(sr["daily_sr"], sr["days"], sr["daily_skew"], sr["daily_kurt"], wf["trial_srs"]) \
             if sr["days"] > 2 and np.isfinite(sr["daily_sr"]) else 0.0
     else:
         dsr = 0.0
+    # the candidates the walk-forward kept choosing, each run alone on the real accounts (for reference only:
+    # they are known to be good *because* the selection saw them do well)
+    chosen = list(dict.fromkeys(p["setup"] for p in picks))
+    chosen_accounts = {k: {label: account(tables[k], rules, costs, split, lab.end) for label, rules in ACCOUNTS.items()}
+                       for k in chosen}
     top = sorted((r for r in rows if r["periodo1"].get("trades", 0) >= 30 and r["periodo2"].get("trades", 0) >= 20),
                  key=lambda r: -(r["periodo1"]["pf"] or 0))[:15]
     return {"version": VERSION, "generated_at": pd.Timestamp.now(tz="UTC").isoformat(), "catalogo": CATALOG,
             "candidatos": len(rows), "linhas": rows, "top_periodo1": [r["key"] for r in top],
             "walk_forward": {"escolhas": picks, "oos": _stats(oos) if oos is not None else {}, "contas": accounts,
-                             "dsr": round(float(dsr), 3)}}
+                             "dsr": round(float(dsr), 3)}, "escolhidos_sozinhos": chosen_accounts}
 
 
 def summarize(rep: dict[str, Any]) -> list[str]:
-    lines = [f"LIVRO v{rep['version']} | {rep['candidatos']} candidatos (16 estratégias, pares, k-de-n, ±filtro macro)"]
+    lines = [f"LIVRO v{rep['version']} | {rep['candidatos']} candidatos "
+             "(16 estratégias, pares, k-de-n, ±filtro macro, ±saída por padrão)"]
     for r in rep["linhas"]:
         if r["tipo"] == "individual":
             t, p1, p2 = r["total"], r["periodo1"], r["periodo2"]
@@ -416,10 +433,16 @@ def summarize(rep: dict[str, Any]) -> list[str]:
                  f"DSR {wf['dsr']}")
     for p in wf["escolhas"]:
         lines.append(f"LIVRO escolha {p['janela']}: {p['setup']} (t treino {p['t_treino']})")
-    for label, a in wf["contas"].items():
+    def fmt(a: dict[str, Any]) -> str:
         mc = a["monte_carlo"]
-        lines.append(f"LIVRO conta {label}: n={a['trades']} PF {a['pf']} lucro US${a['lucro_usd']:+.2f} | mês médio "
-                     f"{a['media_mensal_pct']}% mediana {a['mediana_mensal_pct']}% | meses+ {a['meses_positivos']} "
-                     f"meses≥2% {a['meses_acima_de_2pct']} | DD {a['max_dd']:.1%} | MC ano p5 "
-                     f"{mc.get('year_p5', 0):+.1%} p50 {mc.get('year_p50', 0):+.1%}")
+        return (f"n={a['trades']} ({a['por_semana']}/sem) PF {a['pf']} lucro US${a['lucro_usd']:+.2f} | mês médio "
+                f"{a['media_mensal_pct']}% mediana {a['mediana_mensal_pct']}% | meses+ {a['meses_positivos']} "
+                f"meses≥2% {a['meses_acima_de_2pct']} | DD {a['max_dd']:.1%} | MC ano p5 {mc.get('year_p5', 0):+.1%} "
+                f"p50 {mc.get('year_p50', 0):+.1%}")
+
+    for label, a in wf["contas"].items():
+        lines.append(f"LIVRO conta WF {label}: {fmt(a)}")
+    for key, accs in rep.get("escolhidos_sozinhos", {}).items():
+        for label, a in accs.items():
+            lines.append(f"LIVRO sozinho {key} | {label}: {fmt(a)}")
     return lines

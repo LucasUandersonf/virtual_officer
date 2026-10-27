@@ -84,4 +84,4 @@ def test_catalog_has_every_book_rule_and_candidates_are_unique():
     ids = {s["id"] for s in livro.CATALOG}
     assert len(ids) == 16 and len(livro.LONGS) == 11 and len(livro.EXITS) == 5
     keys = [c["key"] for c in livro.candidates()]
-    assert len(keys) == len(set(keys)) == 300  # 2 timeframes × ±macro × (18 singles + 55 pairs + 2 k-of-n)
+    assert len(keys) == len(set(keys)) == 600  # 2 timeframes × ±macro × ±exit patterns × (18 + 55 pairs + 2 k-of-n)
