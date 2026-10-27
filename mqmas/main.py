@@ -95,6 +95,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     book = StrategyBook(s, db, risk, router, hub, feed.exchange) if s.book_enabled and feed.exchange else None
     if book:
         tasks.append(asyncio.create_task(book.run(stop), name="strategy_book"))
+    from mqmas.ops import Notifier, backup_loop, heartbeat_loop
+
+    notifier = Notifier(s)
+    hub.add_listener(notifier.on_event)
+    core = [t for t in tasks if t.get_name() in ("orchestrator", "position_manager", "strategy_book")]
+    tasks += [asyncio.create_task(notifier.run(stop), name="notifier"),
+              asyncio.create_task(backup_loop(s, notifier, stop), name="backup"),
+              asyncio.create_task(heartbeat_loop(s, lambda: not feed.is_stale() and not any(t.done() for t in core),
+                                                 stop), name="heartbeat")]
+    if notifier.enabled:
+        await notifier.send(f"MQ-MAS iniciado em modo {s.trading_mode.value}"
+                            + (" · carteira com ORDENS REAIS" if s.is_live and s.book_live_enabled else ""))
     runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, book, stop, tasks)
     tasks.append(asyncio.create_task(_sync_library(s, db), name="pattern_library"))
     if s.research_on_boot:
@@ -311,6 +323,24 @@ async def research_season() -> dict[str, Any]:
     if not path.exists():
         return {"ready": False}
     return {"ready": True, "report": json.loads(path.read_text())}
+
+
+@app.post("/api/review")
+async def review_report(report: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Team review of a backtest report: Python facts + Gauss/Ada/Vera debate (spends LLM quota → admin only)."""
+    from mqmas.agents.review import TradeReport, debate
+    from mqmas.ta.live import load_study
+
+    rt = _rt()
+    expected = rt.settings.admin_token.get_secret_value() if rt.settings.admin_token else None
+    if not expected or not x_admin_token or not hmac.compare_digest(expected, x_admin_token):
+        raise HTTPException(401, "invalid admin token")
+    rep = TradeReport.model_validate(report)
+    res = await debate(rt.router, rep, load_study(_research_root(rt.settings)))
+    for m in res.pop("messages"):
+        await rt.db.save_message(m)
+        await rt.hub.publish("agent_message", m.model_dump(mode="json"))
+    return res
 
 
 @app.post("/api/kill-switch")

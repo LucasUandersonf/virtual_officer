@@ -36,6 +36,7 @@ from mqmas.agents.cro import ChiefRiskOfficer
 from mqmas.agents.personas import PERSONAS
 from mqmas.config import Settings, TradingMode
 from mqmas.data.market_feed import with_backoff
+from mqmas.execution.spot import Fill, OrderRefused, SpotExecutor, client_id
 from mqmas.llm.router import LLMRouter
 from mqmas.models import AgentMessage, AgentRole, CroOpinion, ExitReason, Position, PositionStatus, Vote
 from mqmas.persistence.db import Database
@@ -118,6 +119,9 @@ class StrategyBook:
                 log.warning("book: unknown strategy key ignored: %s", k)
         self.state = BookState()
         self._lock = asyncio.Lock()
+        # real orders only with BOTH switches: TRADING_MODE=live (+ confirmation phrase) and BOOK_LIVE_ENABLED=true
+        self._live = settings.is_live and settings.book_live_enabled
+        self._spot = SpotExecutor(exchange, settings.fee_rate) if exchange is not None else None
 
     @property
     def mode(self) -> str:
@@ -313,8 +317,8 @@ class StrategyBook:
     async def try_entries(self, signals: list[Signal]) -> list[Position]:
         if not signals:
             return []
-        if self._s.trading_mode is TradingMode.LIVE:
-            await self._say(AgentRole.SYSTEM, "Carteira multi-moeda: modo LIVE ainda não suportado — sinais "
+        if self._s.trading_mode is TradingMode.LIVE and not self._live:
+            await self._say(AgentRole.SYSTEM, "Carteira multi-moeda: modo LIVE sem BOOK_LIVE_ENABLED=true — sinais "
                                               "registrados, nenhuma ordem enviada.")
             return []
         opened: list[Position] = []
@@ -344,7 +348,7 @@ class StrategyBook:
                 await self._say(AgentRole.CRO, text, vote=Vote.APPROVE if ok else Vote.REJECT, provider=provider)
                 if not ok:
                     continue
-                pos = await self._open_paper(sig, cfg, stop, target)
+                pos = await (self._open_live if self._live else self._open_paper)(sig, cfg, stop, target)
                 if pos:
                     opened.append(pos)
         return opened
@@ -381,6 +385,129 @@ class StrategyBook:
                            if below_min else ""))
         return pos
 
+    async def _open_live(self, sig: Signal, cfg: Config, stop: float, target: float) -> Position | None:
+        """Real order: persisted as PENDING with our clientOrderId *before* it is sent."""
+        assert self._spot is not None
+        s = self._s
+        ticker = await with_backoff(lambda: self._ex.fetch_ticker(sig.symbol), f"ticker {sig.symbol}")
+        ask = float(ticker.get("ask") or ticker.get("last") or sig.price)
+        limit = ask * (1 + s.max_slippage_pct)
+        stop_pct = (limit - stop) / limit
+        if stop_pct <= 0:
+            return None
+        equity = await self._risk.equity_estimate()
+        committed = sum(p.quantity * p.entry_price for p in await self._db.active_positions(self.mode))
+        free = await self._spot.free_quote()
+        loss_per_unit = stop_pct + 2 * (s.fee_rate + s.max_slippage_pct)
+        notional = min(equity * s.book_risk_per_trade / loss_per_unit, max(equity - committed, 0.0), free * 0.98)
+        cid = client_id("e")
+        hold_minutes = cfg.exit.hold * TF_MS[cfg.tf] // 60_000
+        pos = Position(debate_id=f"book-{int(time.time())}", mode=self.mode, symbol=sig.symbol,
+                       status=PositionStatus.PENDING, quantity=notional / limit, entry_price=limit, stop_price=stop,
+                       take_profit_price=target, entry_order_id=cid,
+                       setup=f"{SETUP_PREFIX}{short_name(cfg)}|hold={hold_minutes}|trail={cfg.exit.trail_atr or 0}"
+                             f"|atr={sig.atr:.8g}|sd={sig.price - stop:.8g}|td={target - sig.price:.8g}|cid={cid}")
+        pos.id = await self._db.insert_position(pos)
+        try:
+            fill = await self._spot.buy(sig.symbol, notional, limit, cid, s.entry_order_timeout_sec)
+        except OrderRefused as exc:
+            await self._cancel_pending(pos)
+            await self._say(AgentRole.EXECUTION, f"Ordem recusada antes de enviar: {exc}. Com o capital atual o "
+                                                 f"risco por operação não alcança o mínimo da Binance.")
+            await self._hub.publish("risk", {"event": "order_refused", "symbol": sig.symbol, "detail": str(exc)})
+            return None
+        except Exception:
+            log.exception("book: live buy %s failed; reconciling by clientOrderId", sig.symbol)
+            await self._reconcile_pending(pos)
+            return None
+        return await self._activate(pos, fill)
+
+    async def _cancel_pending(self, p: Position) -> None:
+        p.status, p.exit_reason = PositionStatus.CANCELLED, ExitReason.ENTRY_TIMEOUT
+        p.closed_at = datetime.now(timezone.utc)
+        await self._db.update_position(p)
+
+    async def _activate(self, p: Position, fill: Fill) -> Position | None:
+        """Entry filled (fully or partly): re-anchor stop/target on the fill and put the stop on the exchange."""
+        if fill.quantity <= 0:
+            await self._cancel_pending(p)
+            await self._say(AgentRole.EXECUTION, f"Compra de {p.symbol} não executada no prazo: cancelada.")
+            return None
+        meta = self._meta(p)
+        p.quantity, p.entry_price, p.fees_usdt = fill.quantity, fill.avg_price, fill.fee_usdt
+        p.stop_price = fill.avg_price - float(meta.get("sd", 0) or 0) if meta.get("sd") else p.stop_price
+        p.take_profit_price = fill.avg_price + float(meta.get("td", 0) or 0) if meta.get("td") else p.take_profit_price
+        p.status = PositionStatus.OPEN
+        await self._db.update_position(p)
+        await self._place_stop(p)
+        await self._hub.publish("position", {"event": "opened", "position": p.model_dump(mode="json")})
+        await self._say(AgentRole.EXECUTION,
+                        f"LIVE BUY {p.symbol}: {p.quantity:.8g} @ {p.entry_price:.6g} (US$ {p.quantity * p.entry_price:.2f}). "
+                        f"Stop {p.stop_price:.6g} {'na Binance ✔' if p.stop_order_id else '⚠ por software'} · "
+                        f"alvo {p.take_profit_price:.6g}.")
+        return p
+
+    async def _place_stop(self, p: Position) -> None:
+        assert self._spot is not None
+        scid = client_id("s")
+        p.setup = "|".join(x for x in (p.setup or "").split("|") if not x.startswith("scid=")) + f"|scid={scid}"
+        await self._db.update_position(p)  # the stop's id is known before it is sent
+        try:
+            p.stop_order_id = await self._spot.place_stop(p.symbol, p.quantity, p.stop_price, scid)
+        except Exception as exc:
+            log.exception("book: exchange stop for %s refused", p.symbol)
+            p.stop_order_id = None
+            await self._hub.publish("risk", {"event": "stop_missing", "symbol": p.symbol, "stop": p.stop_price,
+                                             "detail": str(exc)[:200]})
+        await self._db.update_position(p)
+
+    async def _reconcile_pending(self, p: Position) -> None:
+        """A PENDING row: the order may or may not exist. Ask the exchange by our id; never assume."""
+        assert self._spot is not None
+        cid = self._meta(p).get("cid") or p.entry_order_id or ""
+        order = await self._spot.find(p.symbol, cid)
+        if order is None:
+            await self._cancel_pending(p)
+            return
+        if order.get("status") not in ("closed", "canceled", "expired", "rejected"):
+            await self._spot.cancel(p.symbol, str(order["id"]))
+            order = await self._spot.order(p.symbol, str(order["id"]))
+        await self._activate(p, await self._spot.fill_of(p.symbol, order, "buy"))
+
+    async def reconcile(self) -> None:
+        """At boot: resolve PENDING entries and recover stops sent just before a crash."""
+        if not self._live or self._spot is None:
+            return
+        for p in await self.positions():
+            try:
+                if p.status is PositionStatus.PENDING:
+                    await self._reconcile_pending(p)
+                elif p.status is PositionStatus.OPEN and not p.stop_order_id and self._meta(p).get("scid"):
+                    order = await self._spot.find(p.symbol, self._meta(p)["scid"])
+                    if order and order.get("status") in ("open", "closed"):
+                        p.stop_order_id = str(order["id"])
+                        await self._db.update_position(p)
+            except Exception:
+                log.exception("book: reconcile of position %s failed", p.id)
+                await self._hub.publish("risk", {"event": "reconcile_failed", "symbol": p.symbol, "position_id": p.id})
+
+    async def _check_exchange_stop(self, p: Position) -> bool:
+        """True if the exchange stop has fired (position finished). Re-places a stop that vanished."""
+        assert self._spot is not None
+        if p.stop_order_id:
+            order = await self._spot.order(p.symbol, p.stop_order_id)
+            status = order.get("status")
+            if status == "closed":
+                f = await self._spot.fill_of(p.symbol, order, "sell")
+                await self._finish(p, ExitReason.STOP_LOSS, f.avg_price, f.fee_usdt)
+                return True
+            if status in ("canceled", "expired", "rejected"):
+                p.stop_order_id = None
+                await self._hub.publish("risk", {"event": "stop_vanished", "symbol": p.symbol, "status": status})
+        if not p.stop_order_id:
+            await self._place_stop(p)
+        return False
+
     # ------------------------------------------------------------------ exits
 
     @staticmethod
@@ -396,6 +523,11 @@ class StrategyBook:
         tickers = await with_backoff(lambda: self._ex.fetch_tickers([p.symbol for p in active]), "book tickers")
         now = datetime.now(timezone.utc)
         for p in active:
+            if p.status is not PositionStatus.OPEN:
+                continue
+            live = p.mode == "live" and self._live
+            if live and await self._check_exchange_stop(p):
+                continue
             t = tickers.get(p.symbol) or {}
             bid = float(t.get("bid") or t.get("last") or 0.0)
             if bid <= 0:
@@ -408,6 +540,10 @@ class StrategyBook:
                 if new_stop > p.stop_price:
                     p.stop_price = new_stop
                     await self._db.update_position(p)
+                    if live and p.stop_order_id and self._spot is not None:  # move the exchange stop up
+                        await self._spot.cancel(p.symbol, p.stop_order_id)
+                        p.stop_order_id = None
+                        await self._place_stop(p)
             hold = timedelta(minutes=int(meta.get("hold", 0) or 0))
             reason: ExitReason | None = None
             price = bid
@@ -419,11 +555,17 @@ class StrategyBook:
                 reason, price = ExitReason.TAKE_PROFIT, p.take_profit_price
             elif hold and now - p.opened_at >= hold:
                 reason = ExitReason.TIME_STOP
-            if reason:
+            if reason and live and self._spot is not None:
+                f = await self._spot.sell_all(p.symbol, p.quantity, p.stop_order_id,
+                                              urgent=reason in (ExitReason.STOP_LOSS, ExitReason.MANUAL))
+                await self._finish(p, reason, f.avg_price, f.fee_usdt)
+            elif reason:
                 await self._close(p, reason, price * (1 - self._s.max_slippage_pct))
 
     async def _close(self, p: Position, reason: ExitReason, price: float) -> None:
-        fee = price * p.quantity * self._s.fee_rate
+        await self._finish(p, reason, price, price * p.quantity * self._s.fee_rate)
+
+    async def _finish(self, p: Position, reason: ExitReason, price: float, fee: float) -> None:
         p.exit_price = price
         p.fees_usdt += fee
         p.pnl_usdt = (price - p.entry_price) * p.quantity - p.fees_usdt
@@ -432,7 +574,7 @@ class StrategyBook:
         p.closed_at = datetime.now(timezone.utc)
         await self._db.update_position(p)
         await self._hub.publish("position", {"event": "closed", "position": p.model_dump(mode="json")})
-        await self._say(AgentRole.EXECUTION, f"PAPER SELL {p.symbol} ({reason.value}) @ {price:.6g} · "
+        await self._say(AgentRole.EXECUTION, f"{p.mode.upper()} SELL {p.symbol} ({reason.value}) @ {price:.6g} · "
                                              f"PnL US$ {p.pnl_usdt:+.4f}")
         lock = await self._risk.on_trade_closed()
         if lock:
@@ -455,7 +597,9 @@ class StrategyBook:
         if not self.strategies:
             log.warning("book: no valid strategies configured; idle")
             return
-        log.info("book: running %s", ", ".join(short_name(c) for c in self.strategies))
+        log.info("book: running %s (%s)", ", ".join(short_name(c) for c in self.strategies),
+                 "REAL ORDERS" if self._live else "paper")
+        await self.reconcile()
         while not stop.is_set():
             try:
                 await self.supervise()

@@ -74,14 +74,16 @@ IND_BULLISH = ("golden_cross", "macd_cruza_alta", "rsi_sai_sobrevenda", "estocas
 IND_BEARISH = ("death_cross", "macd_cruza_baixa", "rsi_sai_sobrecompra", "estocastico_baixa_sobrecompra",
                "cci_sai_de_cima", "roc_vira_negativo", "adx_tendencia_baixa", "sar_vira_baixa", "ichimoku_perde_nuvem",
                "ichimoku_tk_baixa", "ttm_squeeze_dispara_baixa", "obv_cruza_baixa", "vwap_perde")
-BULL = set(BULLISH) | set(BULLISH_STRUCT) | set(IND_BULLISH) | set(BULLISH_EW)
+COMBOS = ("combo_adx_ob_engolfo", "combo_ob_engolfo", "combo_ob_engolfo_rsi")
+BULL = set(BULLISH) | set(BULLISH_STRUCT) | set(IND_BULLISH) | set(BULLISH_EW) | set(COMBOS)
 BEAR = set(BEARISH) | set(BEARISH_STRUCT) | set(IND_BEARISH) | set(BEARISH_EW)
 CATEGORY = {**{k: "candle" for k in BULLISH + BEARISH + NEUTRAL},
             **{k: "estrutura" for k in ("bos_alta", "bos_baixa", "choch_alta", "choch_baixa", "ob_alta_reteste",
                                         "ob_baixa_reteste", "fvg_alta_reteste", "fvg_baixa_reteste",
                                         "varredura_fundo", "varredura_topo")},
             **{k: "indicador" for k in IND_BULLISH + IND_BEARISH},
-            **{k: "ondas de Elliott" for k in BULLISH_EW + BEARISH_EW}}
+            **{k: "ondas de Elliott" for k in BULLISH_EW + BEARISH_EW},
+            **{k: "combinação do time" for k in COMBOS}}
 
 
 def is_bull(name: str) -> bool:
@@ -96,11 +98,26 @@ def category(name: str) -> str:
     return "worklist do time" if name[:1].isdigit() else CATEGORY.get(name, "padrão gráfico")
 
 
+def combo_events(cp: pd.DataFrame, struct: pd.DataFrame, f: pd.DataFrame) -> pd.DataFrame:
+    """The team's multi-pattern filters, tested as one signal: a bullish engulfing while price retests a
+    bullish order block (both within the last 3 bars), with or without a trend/oversold filter."""
+    def recent(x: pd.Series) -> pd.Series:
+        return x.astype(float).rolling(3, min_periods=1).max().astype(bool)
+
+    eng, ob = cp["engolfo_alta"].astype(bool), recent(struct["ob_alta_reteste"])
+    base = eng & ob
+    trend = (f["adx"] >= 25) & (f["plus_di"] > f["minus_di"])
+    oversold = recent(f["rsi"] < 35)
+    return pd.DataFrame({"combo_adx_ob_engolfo": base & trend, "combo_ob_engolfo": base,
+                         "combo_ob_engolfo_rsi": base & oversold}, index=cp.index).fillna(False)
+
+
 def all_events(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, Any]:
     f = all_indicators(df)
     cp = candle_patterns(df)
     struct, state = structure_events(df)
-    ev = pd.concat([cp, struct, indicator_events(df, f), elliott_events(df), worklist(df, f, cp, struct)], axis=1)
+    ev = pd.concat([cp, struct, indicator_events(df, f), elliott_events(df), worklist(df, f, cp, struct),
+                    combo_events(cp, struct, f)], axis=1)
     return ev, f, state
 
 

@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|all]`` — run the labs whose report is missing or outdated."""
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|all]`` — run the labs whose report is missing or outdated."""
 
 from __future__ import annotations
 
@@ -72,6 +72,18 @@ def main() -> None:
             for line in confluence_study.summarize(rep):
                 log.info(line)
             log.info("confluence study saved to %s", path)
+    if which in ("port", "all"):
+        from mqmas.research import pattern_portfolio
+
+        path, ta_path = root / "pattern_portfolio.json", root / "ta_report.json"
+        stale = not _current(path, pattern_portfolio.VERSION) or (
+            ta_path.exists() and path.exists() and ta_path.stat().st_mtime > path.stat().st_mtime)
+        if ta_path.exists() and (which == "port" or stale):
+            rep = pattern_portfolio.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in pattern_portfolio.summarize(rep):
+                log.info(line)
+            log.info("pattern portfolio saved to %s", path)
 
 
 if __name__ == "__main__":

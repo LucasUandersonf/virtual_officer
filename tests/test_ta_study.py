@@ -81,3 +81,24 @@ def test_confluence_score_validates_a_real_edge(tmp_path):
 def test_confluence_score_rejects_noise(tmp_path):
     rep = _confluence(tmp_path, planted=False)
     assert not rep["tf"]["4h"]["validado"], rep["tf"]["4h"]
+
+
+def test_pattern_portfolio_trades_the_planted_edge(tmp_path):
+    from mqmas.research import pattern_portfolio
+
+    study = _make(tmp_path, planted=True)
+    rng = np.random.default_rng(42)
+    n = 24 * 365 * 4
+    rng.normal(0, 0.004, n)
+    bars = np.sort(rng.choice(np.arange(24 * 60, n - 48, 4), size=900, replace=False))
+    marks = set((pd.Timestamp("2022-01-01", tz="UTC") + pd.to_timedelta(bars + 3, unit="h")).floor("4h"))
+
+    def events(df: pd.DataFrame):
+        f = all_indicators(df)
+        return pd.DataFrame({"controle_alta": [t in marks for t in df.index]}, index=df.index), f, None
+
+    rep = pattern_portfolio.run(tmp_path, events_fn=events, study=study)
+    row = next(r for r in rep["linhas"] if r["padrao"] == "controle_alta")
+    acc = row["contas"]["A: US$120 a 0,6%"]
+    assert acc["trades"] > 30 and acc["total_return"] > 0 and acc["profit_factor"] > 1.2, row
+    assert pattern_portfolio.summarize(rep)[1].startswith(("APROVADO", "reprovado"))

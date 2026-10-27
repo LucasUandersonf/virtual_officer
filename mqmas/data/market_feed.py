@@ -66,7 +66,9 @@ class ExchangeFeed:
         import ccxt.pro as ccxtpro
 
         self._s = settings
-        opts: dict[str, Any] = {"enableRateLimit": True, "options": {"defaultType": "spot"}}
+        # rate limiter on; clock offset to Binance measured and applied to every signed request
+        opts: dict[str, Any] = {"enableRateLimit": True, "options": {
+            "defaultType": "spot", "adjustForTimeDifference": True, "recvWindow": 10_000}}
         if settings.exchange_api_key and settings.exchange_api_secret:
             opts["apiKey"] = settings.exchange_api_key.get_secret_value()
             opts["secret"] = settings.exchange_api_secret.get_secret_value()

@@ -100,7 +100,16 @@ class Settings(BaseSettings):
     book_pool_size: int = Field(default=40, ge=10, le=80)
     book_top_n: int = Field(default=15, ge=3, le=40)
     book_min_range: float = 0.025
-    book_max_range: float = 0.15  # run the multi-asset research lab once (subprocess) if no report exists
+    book_max_range: float = 0.15
+    book_live_enabled: bool = False  # second switch: real book orders need TRADING_MODE=live AND this
+
+    # --- Alerts, heartbeat, backups ------------------------------------------------------
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
+    heartbeat_url: str | None = None  # e.g. a healthchecks.io ping URL: alerts you if pings stop
+    heartbeat_interval_sec: int = Field(default=300, ge=60)
+    backup_hour_utc: int = Field(default=3, ge=0, le=23)
+    backup_keep: int = Field(default=7, ge=1, le=60)  # run the multi-asset research lab once (subprocess) if no report exists
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 
     # --- Agent loop ---------------------------------------------------------------

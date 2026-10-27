@@ -32,7 +32,7 @@ from mqmas.ta.signals import all_events, category, is_bear, is_bull
 
 log = logging.getLogger(__name__)
 
-VERSION = 4
+VERSION = 5
 HORIZONS = {"4h": (1, 3, 6, 12), "1d": (1, 3, 5, 10)}
 HOLD = {"4h": 12, "1d": 10}
 HEADLINE = {"4h": 6, "1d": 5}  # horizon used for the verdict: 1 day on 4h bars, 1 week on daily bars

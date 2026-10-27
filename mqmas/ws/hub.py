@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -29,6 +30,12 @@ class WebSocketHub:
         self._clients: dict[WebSocket, asyncio.Queue[str]] = {}
         self._replay: deque[str] = deque(maxlen=REPLAY_SIZE)
         self._last_telemetry: str | None = None
+        self._listeners: list[Callable[[str, dict[str, Any]], Awaitable[None]]] = []
+        self._pending: set[asyncio.Task[None]] = set()
+
+    def add_listener(self, fn: Callable[[str, dict[str, Any]], Awaitable[None]]) -> None:
+        """In-process subscriber (e.g. phone alerts); called without blocking the publisher."""
+        self._listeners.append(fn)
 
     @property
     def client_count(self) -> int:
@@ -45,6 +52,18 @@ class WebSocketHub:
                 with contextlib.suppress(asyncio.QueueEmpty):
                     q.get_nowait()
             q.put_nowait(msg)
+        for fn in self._listeners:
+            task = asyncio.create_task(self._notify(fn, event_type, payload))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+    @staticmethod
+    async def _notify(fn: Callable[[str, dict[str, Any]], Awaitable[None]], event_type: str,
+                      payload: dict[str, Any]) -> None:
+        try:
+            await fn(event_type, payload)
+        except Exception:
+            log.exception("hub listener failed")
 
     async def serve(self, ws: WebSocket, hello: dict[str, Any]) -> None:
         await ws.accept()

@@ -324,3 +324,28 @@ As travas de risco **só podem ser apertadas**. Valores mais frouxos que o manda
 - **Kelly**: fórmula que sugere quanto arriscar dada a vantagem estatística; usamos ¼ dela por segurança.
 - **Circuit breaker**: bloqueio automático após perdas seguidas.
 - **API Key / Secret**: "login e senha" que permitem ao robô operar sua conta.
+
+## Execução real, alertas e backups
+
+### Duas chaves para operar dinheiro real na carteira multi-moeda
+Precisam estar **as duas** ligadas: `TRADING_MODE=live` (com `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS` e as chaves da Binance) **e** `BOOK_LIVE_ENABLED=true`. Sem a segunda, o modo real registra os sinais e não envia ordens.
+
+O que a execução real garante (`mqmas/execution/spot.py`):
+- **Stop dentro da Binance** (STOP_LOSS_LIMIT) logo após a compra. Se o servidor cair, a posição continua protegida. Se a Binance recusar o stop, chega um alerta e o stop por software continua ativo.
+- **ID próprio em cada ordem** (`clientOrderId`), gravado no banco antes do envio. Se houver queda ou timeout, a ordem é consultada pelo ID e nunca reenviada.
+- **Reconciliação ao ligar:** entradas pendentes são conferidas na Binance, e stops que sumiram são recolocados.
+- **Filtros do par:** lote, tick e mínimo de US$5. Ordens abaixo do mínimo são recusadas antes do envio, com alerta. Com US$50 a 0,6% de risco quase toda ordem fica abaixo do mínimo; veja a decisão A/B.
+- **Relógio sincronizado** com a Binance (`adjustForTimeDifference`) e limitador de requisições ligado.
+
+### Alertas no celular (Telegram)
+1. No Telegram, fale com **@BotFather** → `/newbot` → copie o token.
+2. Mande qualquer mensagem para o seu bot e abra `https://api.telegram.org/bot<TOKEN>/getUpdates` para ver o `chat.id`.
+3. No Railway → Variables: `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`.
+
+Você recebe: compras, vendas, circuit breaker, kill switch, stop ausente, ordem recusada, falha de reconciliação e o **backup diário do banco** (às 03:00 UTC, mantendo 7 cópias também no volume).
+
+### Aviso se o robô parar (heartbeat)
+Crie um check grátis em **healthchecks.io** com período de 10 min e coloque a URL de ping em `HEARTBEAT_URL`. Enquanto o robô estiver saudável, ele envia o ping a cada 5 min. Se os pings pararem, o healthchecks avisa você por e-mail ou Telegram.
+
+### Revisão de relatórios pelas IAs
+`POST /api/review` (cabeçalho `x-admin-token`) com `trades`, `win_rate`, `payoff`, `net_return_pct`, `max_consecutive_losses`, `max_drawdown_pct` e `patterns`. O Python calcula os fatos e Gauss, Ada e Vera debatem, com o histórico medido dos padrões. O debate aparece no escritório.
