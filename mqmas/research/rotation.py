@@ -30,16 +30,20 @@ class RotationConfig:
     sma: int
     vol_target: float | None
     rebalance: int = 7
+    trend_exit: bool = False  # drop a holding as soon as it closes below its own SMA20
 
     @property
     def key(self) -> str:
         return (f"rotation|1d|lookback={self.lookback},top={self.top_k},sma={self.sma},"
-                f"voltarget={self.vol_target},rebal={self.rebalance}")
+                f"voltarget={self.vol_target},rebal={self.rebalance},trendexit={self.trend_exit}")
 
 
 def rotation_configs() -> list[RotationConfig]:
-    return [RotationConfig(lb, k, sma, vt) for lb, k, sma, vt in
-            itertools.product((14, 30, 60), (1, 3, 5), (50, 100), (None, 0.5))]
+    v1 = [RotationConfig(lb, k, sma, vt) for lb, k, sma, vt in
+          itertools.product((14, 30, 60), (1, 3, 5), (50, 100), (None, 0.5))]
+    v2 = [RotationConfig(lb, k, sma, vt, 7, te) for lb, k, sma, vt, te in
+          itertools.product((30, 60, 90), (3, 5), (100, 200), (0.25, 0.4), (False, True))]
+    return v1 + v2
 
 
 def rotation_returns(closes: pd.DataFrame, btc_close: pd.Series, eligible: dict[pd.Period, set[str]],
@@ -47,6 +51,7 @@ def rotation_returns(closes: pd.DataFrame, btc_close: pd.Series, eligible: dict[
     """Daily net portfolio returns (index = day the return is earned)."""
     rets = closes.pct_change()
     mom = closes / closes.shift(cfg.lookback) - 1
+    below_trend = closes < closes.rolling(20).mean()
     regime = btc_close > btc_close.rolling(cfg.sma).mean()
     weights = pd.Series(0.0, index=closes.columns)
     out = np.zeros(len(closes))
@@ -74,6 +79,13 @@ def rotation_returns(closes: pd.DataFrame, btc_close: pd.Series, eligible: dict[
             cost = turnover * (costs.fee + costs.slippage)
             gross = float((target * r_today).sum())
             weights = target
+        elif cfg.trend_exit and (weights > 0).any():
+            held = weights[weights > 0].index
+            exits = [c for c in held if bool(below_trend.at[d_prev, c])]
+            if exits:
+                cost = float(weights[exits].sum()) * (costs.fee + costs.slippage)
+                gross = float((weights.drop(exits) * r_today.drop(exits)).sum())
+                weights[exits] = 0.0
         out[i] = gross - cost
         # drift weights with prices so turnover is measured honestly
         grown = weights * (1 + r_today)

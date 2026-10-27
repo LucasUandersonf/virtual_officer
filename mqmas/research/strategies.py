@@ -109,7 +109,7 @@ class Config:
 FAMILIES: dict[str, SignalFn] = {
     "breakout": _breakout, "pullback": _pullback, "meanrev": _meanrev, "squeeze": _squeeze,
 }
-HOLD = {"1h": 120, "4h": 60}  # 5 and 10 days
+HOLD = {"1h": 120, "4h": 60, "1d": 40}  # 5, 10 and 40 days
 
 
 def _grid(family: str, tf: str, params: dict[str, list[Any]], exits: list[Exit]) -> list[Config]:
@@ -118,7 +118,7 @@ def _grid(family: str, tf: str, params: dict[str, list[Any]], exits: list[Exit])
             for combo in itertools.product(*params.values()) for ex in exits]
 
 
-def build_configs(timeframes: tuple[str, ...] = ("1h", "4h")) -> list[Config]:
+def build_configs(timeframes: tuple[str, ...] = ("1h", "4h", "1d")) -> list[Config]:
     out: list[Config] = []
     for tf in timeframes:
         h = HOLD[tf]

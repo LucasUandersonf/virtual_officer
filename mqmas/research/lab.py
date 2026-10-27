@@ -34,7 +34,7 @@ from scipy import stats
 
 from mqmas.research.data import candidate_pool, load_history
 from mqmas.research.engine import Costs, RiskRules, bracket_trades, simulate_portfolio
-from mqmas.research.rotation import returns_metrics, rotation_configs, rotation_returns
+from mqmas.research.rotation import RotationConfig, returns_metrics, rotation_configs, rotation_returns
 from mqmas.research.strategies import (
     FAMILIES,
     WARMUP,
@@ -48,7 +48,7 @@ from mqmas.research.strategies import (
 
 log = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2
 HISTORY_START = pd.Timestamp("2022-01-01", tz="UTC")
 FIRST_TEST = pd.Timestamp("2023-07-01", tz="UTC")
 WINDOW_MONTHS = 6
@@ -131,7 +131,9 @@ class Lab:
         self.root = root
         self.pool_size, self.top_n, self.min_range, self.max_range = pool_size, top_n, min_range, max_range
         self.costs = Costs()
-        self.rules = RiskRules()
+        # Percent results are scale-free; a large notional base keeps Binance's $5 minimum from
+        # silently censoring wide-stop setups. Feasibility for the real $50 is reported separately.
+        self.rules = RiskRules(equity0=10_000.0)
 
     # ------------------------------------------------------------------ data
 
@@ -229,7 +231,13 @@ class Lab:
                 self.rules.equity0)
             monthly = daily.resample("ME").last().pct_change().dropna()
             worst_days = daily.pct_change().nsmallest(3)
-        dsr = deflated_sharpe(m["daily_sr"], m["days"], m["daily_skew"], m["daily_kurt"], trial_srs)
+        dsr = deflated_sharpe(m["daily_sr"], m["days"], m["daily_skew"], m["daily_kurt"], trial_srs) \
+            if m["days"] > 2 and np.isfinite(m["daily_sr"]) else 0.0
+        if not isinstance(oos_daily_or_trades, pd.Series) and len(oos_daily_or_trades):
+            stop = float(oos_daily_or_trades["stop_pct"].median()) + self.costs.round_trip
+            m["min_capital_usd"] = 5.0 * stop / RiskRules().risk_per_trade
+        else:
+            m["min_capital_usd"] = 5.0 * 3  # rotation: top-k slots of at least $5
         m["dsr"] = dsr
         m["stressed_profit_factor"] = stressed_pf
         fails = []
@@ -266,7 +274,9 @@ class Lab:
                 p.pop("start"), p.pop("end")
             candidates.append(self.evaluate(name, r["oos_trades"], r["trial_srs"],
                                             st_res.metrics["profit_factor"], r["picks"], last_cfg))
-        candidates.append(self.rotation())
+        all_rot = rotation_configs()
+        candidates.append(self.rotation("rotation|1d", all_rot, all_rot))
+        candidates.append(self.rotation("rotation-safe|1d", [c for c in all_rot if c.trend_exit], all_rot))
         all_trials = sum(len(r["trial_srs"]) for r in wf.values()) + len(rotation_configs())
         candidates.sort(key=lambda x: (x["approved"], x["metrics"]["sortino"]), reverse=True)
         report = {"version": VERSION, "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
@@ -278,14 +288,15 @@ class Lab:
 
     # ------------------------------------------------------------------ rotation
 
-    def rotation(self) -> dict[str, Any]:
+    def rotation(self, name: str, cfgs: list[RotationConfig], trials: list[RotationConfig]) -> dict[str, Any]:
         closes = pd.DataFrame({c: d["close"] for c, d in self.data["1d"].items()}).sort_index()
         closes = closes[closes.index >= HISTORY_START - pd.Timedelta(days=120)]
         btc = closes["BTC/USDT"]
-        cfgs = rotation_configs()
-        series = {c.key: rotation_returns(closes, btc, self.eligible, c, self.costs) for c in cfgs}
+        if not hasattr(self, "_rot_cache"):
+            self._rot_cache = {c.key: rotation_returns(closes, btc, self.eligible, c, self.costs) for c in trials}
+        series = self._rot_cache
         stressed_costs = Costs(self.costs.fee * 2, self.costs.slippage * 2)
-        is_sr = {}
+        is_sr: dict[str, float] = {}
         for k, s in series.items():
             tr = s[(s.index >= HISTORY_START) & (s.index < FIRST_TEST)]
             is_sr[k] = float(tr.mean() / tr.std(ddof=1)) if tr.std(ddof=1) > 0 else 0.0
@@ -305,7 +316,7 @@ class Lab:
             st_oos.append(st[(st.index >= s) & (st.index < e)])
         oos_s = pd.concat(oos)
         st_m = returns_metrics(pd.concat(st_oos), self.rules.equity0)
-        return self.evaluate("rotation|1d", oos_s, list(is_sr.values()), st_m["profit_factor"], picks,
+        return self.evaluate(name, oos_s, list(is_sr.values()), st_m["profit_factor"], picks,
                              picks[-1]["config"])
 
 
@@ -322,7 +333,7 @@ def summarize(report: dict[str, Any]) -> list[str]:
             f"mediana {m['monthly_median']:+.2%} pior {m['monthly_worst']:+.2%} meses+ {m['positive_months']:.0%} | "
             f"trades {m['trades']:.0f} acerto {m['win_rate']:.0%} PF {m['profit_factor']:.2f} payoff {m['payoff']:.2f} "
             f"DD {m['max_drawdown']:.1%} Sharpe {m['sharpe']:.2f} Sortino {m['sortino']:.2f} DSR {m['dsr']:.2f} "
-            f"PFx2custo {m['stressed_profit_factor']:.2f} | MC DD95 {c['monte_carlo'].get('dd_p95', 0):.1%} "
+            f"PFx2custo {m['stressed_profit_factor']:.2f} capmin ${m.get('min_capital_usd', 0):.0f} | MC DD95 {c['monte_carlo'].get('dd_p95', 0):.1%} "
             f"ano p5 {c['monte_carlo'].get('year_p5', 0):+.1%} | falhas: {'; '.join(c['fails']) or '-'}")
         lines.append(f"    config ao vivo: {c['live_config']}")
         lines.append("    regimes: " + " | ".join(f"{k}: {v['months']}m média {v['mean']:+.2%} pos {v['positive']:.0%}"
