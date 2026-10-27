@@ -1,11 +1,15 @@
+# Default deploy: the two desks as a Railway cron job (python -m mqmas.runner). The container starts every hour,
+# runs for about a minute (stop checks; the daily rebalance after 00:00 UTC) and exits, so Railway bills only
+# while it runs. The 24 h web office (uvicorn + healthcheck) moved to railway.web.toml.
+# The volume at /data keeps the SQLite state between runs.
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-healthcheckPath = "/health"
-healthcheckTimeout = 120
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
-# Exactly one replica: two instances would run two trading loops on the same account.
+startCommand = "python -m mqmas.runner"
+cronSchedule = "7 * * * *"
+# Never restart a finished run: the next one comes from the schedule. A failed run shows up as failed in
+# Railway, skips the heartbeat ping and sends the error to Telegram.
+restartPolicyType = "NEVER"
 numReplicas = 1
