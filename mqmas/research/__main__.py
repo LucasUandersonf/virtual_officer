@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|all]``.
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|arena|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -148,6 +148,16 @@ def main() -> None:
             for line in crosscheck.summarize(rep):
                 log.info(line)
             log.info("crosscheck report saved to %s", path)
+    if which in ("arena", "all"):
+        from mqmas.research import arena
+
+        path = root / "arena_report.json"
+        if which == "arena" or not _current(path, arena.VERSION):
+            rep = arena.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in arena.summarize(rep):
+                log.info(line)
+            log.info("arena report saved to %s", path)
 
 
 if __name__ == "__main__":

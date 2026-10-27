@@ -375,6 +375,15 @@ async def research_livro() -> dict[str, Any]:
             "linhas": [{k: r[k] for k in ("key", "total", "periodo1", "periodo2")} for r in rep["linhas"]]}
 
 
+@app.get("/api/research/arena")
+async def research_arena() -> dict[str, Any]:
+    """Every rule on 1h/2h/4h/1d/2d/3d, alone and in confluence, chosen blind; survivors with 40–60 % hit rate."""
+    path = _research_root(_rt().settings) / "arena_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.get("/api/research/crosscheck")
 async def research_crosscheck() -> dict[str, Any]:
     """Our engine vs backtesting.py on the same Binance candles and rules."""
