@@ -57,7 +57,7 @@ Leitura honesta:
 
 1. **Faça o merge deste branch na `main`.**
 2. Na mesma tela do serviço `mq-mas` (ou num serviço novo, a partir do mesmo repositório):
-   - **Settings → Config-as-code → Railway config file:** `railway.runner.toml`
+   - Nada a configurar: o `railway.toml` do repositório já é o cron do runner (o escritório 24 h ficou em `railway.web.toml`).
    - Confira se o **volume** continua montado em `/data` (o estado fica em `/data/mqmas.db`).
    - Isso troca o servidor 24 h pelo *cron* `7 * * * *` (todo minuto 7 de cada hora, em UTC).
 3. **Variables:** `TREND_CAPITAL_USDT=120` (ou o valor da sua banca) e, opcionalmente, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `HEARTBEAT_URL`. Remova `RESEARCH_ON_BOOT` e `REVIEW_ON_BOOT`, que só valem para o servidor web.
