@@ -41,7 +41,7 @@ from mqmas.ta.structure import pivots, structure_events
 
 log = logging.getLogger(__name__)
 
-VERSION = 3
+VERSION = 4
 CONFIRM = 3  # candles within which a confluence partner must also have fired
 TFS = ("1d", "3d")  # 4h lost after costs in v1/v2; 3-day candles = slower swing
 HOLD = {"1d": 40, "3d": 20}  # time stop: 40 days / 60 days
@@ -416,6 +416,22 @@ def run(root: Path, ex: Any = None) -> dict[str, Any]:
             if sr["days"] > 2 and np.isfinite(sr["daily_sr"]) else 0.0
     else:
         dsr = 0.0
+    # the same blind selection restricted to each timeframe ("what if we only used 3-day candles?")
+    by_tf: dict[str, Any] = {}
+    for tf in TFS:
+        sub = {k: v for k, v in usable.items() if k.startswith(f"{tf}|")}
+        if not sub:
+            continue
+        w = lab.walk_forward({tf: list(sub)}, sub)[tf]
+        o_tf = w["oos_trades"]
+        by_tf[tf] = {"escolhas": [{"janela": p["window"], "setup": p["config"], "t_treino": round(p["train_tstat"], 2)}
+                                  for p in w["picks"]],
+                     "oos": _stats(o_tf) if o_tf is not None else {},
+                     "contas": {label: account(o_tf, rules, costs, split, lab.end) for label, rules in ACCOUNTS.items()}
+                     if o_tf is not None and len(o_tf) else {}}
+        picks_tf = list(dict.fromkeys(p["config"] for p in w["picks"]))
+        by_tf[tf]["sozinhos"] = {k: {label: account(tables[k], rules, costs, split, lab.end)
+                                     for label, rules in ACCOUNTS.items()} for k in picks_tf}
     # the candidates the walk-forward kept choosing, each run alone on the real accounts (for reference only:
     # they are known to be good *because* the selection saw them do well)
     chosen = list(dict.fromkeys(p["setup"] for p in picks))
@@ -426,7 +442,8 @@ def run(root: Path, ex: Any = None) -> dict[str, Any]:
     return {"version": VERSION, "generated_at": pd.Timestamp.now(tz="UTC").isoformat(), "catalogo": CATALOG,
             "candidatos": len(rows), "linhas": rows, "top_periodo1": [r["key"] for r in top],
             "walk_forward": {"escolhas": picks, "oos": _stats(oos) if oos is not None else {}, "contas": accounts,
-                             "dsr": round(float(dsr), 3)}, "escolhidos_sozinhos": chosen_accounts}
+                             "dsr": round(float(dsr), 3)}, "escolhidos_sozinhos": chosen_accounts,
+            "walk_forward_por_tf": by_tf}
 
 
 def summarize(rep: dict[str, Any]) -> list[str]:
@@ -459,6 +476,15 @@ def summarize(rep: dict[str, Any]) -> list[str]:
 
     for label, a in wf["contas"].items():
         lines.append(f"LIVRO conta WF {label}: {fmt(a)}")
+    for tf, w in rep.get("walk_forward_por_tf", {}).items():
+        lines.append(f"LIVRO WF-{tf} (escolha cega só entre candidatos {tf}) | OOS {w['oos']}")
+        for p in w["escolhas"]:
+            lines.append(f"LIVRO WF-{tf} escolha {p['janela']}: {p['setup']} (t treino {p['t_treino']})")
+        for label, a in w["contas"].items():
+            lines.append(f"LIVRO WF-{tf} conta {label}: {fmt(a)}")
+        for key, accs in w["sozinhos"].items():
+            for label, a in accs.items():
+                lines.append(f"LIVRO WF-{tf} sozinho {key} | {label}: {fmt(a)}")
     for key, accs in rep.get("escolhidos_sozinhos", {}).items():
         for label, a in accs.items():
             lines.append(f"LIVRO sozinho {key} | {label}: {fmt(a)}")
