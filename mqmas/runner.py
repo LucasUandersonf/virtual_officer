@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from typing import Any
 
@@ -24,6 +25,7 @@ from mqmas.config import Settings, get_settings
 from mqmas.logging_setup import configure_logging
 from mqmas.ops import Notifier
 from mqmas.persistence.db import Database
+from mqmas.research.data import PUBLIC_DATA_URL
 from mqmas.trend.live import TrendAllocator
 
 log = logging.getLogger("mqmas.runner")
@@ -38,7 +40,10 @@ def build_exchange(s: Settings) -> Any:
     if s.exchange_api_key and s.exchange_api_secret:
         opts["apiKey"] = s.exchange_api_key.get_secret_value()
         opts["secret"] = s.exchange_api_secret.get_secret_value()
-    return getattr(ccxt_async, s.exchange_id)(opts)
+    ex = getattr(ccxt_async, s.exchange_id)(opts)
+    if os.environ.get("MQMAS_PUBLIC_DATA") == "1" and not s.is_live:  # paper from a region api.binance.com refuses
+        ex.urls["api"]["public"] = PUBLIC_DATA_URL
+    return ex
 
 
 async def run(argv: list[str], settings: Settings | None = None, exchange: Any = None) -> dict[str, Any]:

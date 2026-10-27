@@ -11,6 +11,7 @@ on:
     paths:
       - "mqmas/trend/**"
       - "mqmas/research/trend_study.py"
+      - "mqmas/runner.py"
       - ".github/workflows/research.yml"
   schedule:
     - cron: "17 3 2 * *"
@@ -26,6 +27,10 @@ jobs:
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
       - run: python -m mqmas.research ./research ${{ github.event.inputs.lab || 'trend' }}
+      - name: paper run of the live allocator on today's market (smoke test, no orders)
+        run: |
+          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=120 python -m mqmas.runner
+          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=120 python -m mqmas.runner
       - uses: actions/upload-artifact@v4
         with:
           name: research-${{ github.event.inputs.lab || 'trend' }}
