@@ -52,8 +52,7 @@ from mqmas.research.strategies import (
     relative_strength,
 )
 from mqmas.risk.constraints import RiskManager
-from mqmas.ta.live import compact
-from mqmas.ta.live import report as ta_report
+from mqmas.ta.live import agent_view
 from mqmas.ws.hub import WebSocketHub
 
 log = logging.getLogger(__name__)
@@ -223,7 +222,7 @@ class StrategyBook:
 
     def _ta(self, df: pd.DataFrame, tf: str) -> dict[str, Any]:
         try:
-            return compact(ta_report(df[["open", "high", "low", "close", "volume"]], tf, self._s.db_path.parent / "research"))
+            return agent_view(df[["open", "high", "low", "close", "volume"]], tf, self._s.db_path.parent / "research")
         except Exception:
             log.exception("book: technical analysis failed")
             return {}

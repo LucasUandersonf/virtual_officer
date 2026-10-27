@@ -47,8 +47,7 @@ from mqmas.quant.evidence import BacktestResult, compute_setup_stats
 from mqmas.quant.pipeline import QuantPipeline
 from mqmas.quant.sizing import build_sizing_plan
 from mqmas.risk.constraints import RiskManager
-from mqmas.ta.live import compact
-from mqmas.ta.live import report as ta_report
+from mqmas.ta.live import agent_view
 from mqmas.ws.hub import WebSocketHub
 
 log = logging.getLogger(__name__)
@@ -111,7 +110,7 @@ class Orchestrator:
         """Compact technical report of the desk symbol on its own timeframe (closed candles only)."""
         try:
             df = self._feed.candles().iloc[:-1][["open", "high", "low", "close", "volume"]]
-            return compact(ta_report(df, self._s.timeframe, self._s.db_path.parent / "research"))
+            return agent_view(df, self._s.timeframe, self._s.db_path.parent / "research")
         except Exception:
             log.exception("technical analysis failed")
             return {}

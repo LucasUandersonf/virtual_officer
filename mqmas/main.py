@@ -224,6 +224,24 @@ async def technical_analysis(base: str, tf: str = "4h", quote: str = "USDT") -> 
     return {"symbol": symbol, "tf": tf, **rep}
 
 
+@app.get("/api/levels/{base}")
+async def price_levels(base: str, tf: str = "4h", quote: str = "USDT") -> dict[str, Any]:
+    """Marked price map of BASE/QUOTE: confluence zones (support/resistance) and a long plan."""
+    from mqmas.ta.levels import price_map
+
+    rt = _rt()
+    if tf not in ("1h", "4h", "1d"):
+        raise HTTPException(400, "tf must be 1h, 4h or 1d")
+    ex = rt.feed.exchange
+    if ex is None:
+        raise HTTPException(503, "no exchange connection (synthetic feed)")
+    symbol = f"{base.upper()}/{quote.upper()}"
+    rows = await ex.fetch_ohlcv(symbol, tf, limit=400)
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df.index = pd.to_datetime(df.pop("ts").astype("int64"), unit="ms", utc=True)
+    return {"symbol": symbol, "tf": tf, **await asyncio.to_thread(price_map, df.iloc[:-1].astype(float))}
+
+
 @app.get("/api/ta-study")
 async def ta_study_report() -> dict[str, Any]:
     path = _research_root(_rt().settings) / "ta_report.json"

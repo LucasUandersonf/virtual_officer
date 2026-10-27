@@ -32,7 +32,7 @@ from mqmas.ta.signals import all_events, category, is_bear, is_bull
 
 log = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 3
 HORIZONS = {"4h": (1, 3, 6, 12), "1d": (1, 3, 5, 10)}
 HOLD = {"4h": 12, "1d": 10}
 HEADLINE = {"4h": 6, "1d": 5}  # horizon used for the verdict: 1 day on 4h bars, 1 week on daily bars
@@ -56,17 +56,19 @@ def _pf(r: np.ndarray) -> float:
     return min(gain / loss, 99.0) if loss > 0 else (99.0 if r.size else 0.0)
 
 
-def run(root: Path) -> dict[str, Any]:
+def run(root: Path, events_fn: Any = None) -> dict[str, Any]:
+    events_fn = events_fn or all_events
     h1 = load_cached(root)
     costs = Costs()
     store: dict[tuple[str, str], list[pd.Series]] = {}
     trades: dict[tuple[str, str], list[pd.DataFrame]] = {}
     counts: dict[tuple[str, str], int] = {}
+    raw: dict[tuple[str, str], list[pd.Series]] = {}
     for coin, d in h1.items():
         for tf in ("4h", "1d"):
             df = resample(d, "4h", 4) if tf == "4h" else resample(d, "1D", 24)
             df = df[["open", "high", "low", "close", "volume"]]
-            ev, f, _ = all_events(df)
+            ev, f, _ = events_fn(df)
             c = df["close"]
             o, hi, lo, cl = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
             a = f["atr"].to_numpy()
@@ -80,6 +82,8 @@ def run(root: Path) -> dict[str, Any]:
                 sign = -1.0 if is_bear(name) else 1.0
                 for k in HORIZONS[tf]:
                     store.setdefault((name, f"{tf}|{k}"), []).append(sign * (fwd[k][mask] - base[k]))
+                    # what most websites report: the raw move, no drift removed, no costs
+                    raw.setdefault((name, f"{tf}|{k}"), []).append(sign * fwd[k][mask])
                 counts[(name, tf)] = counts.get((name, tf), 0) + int(mask.sum())
                 if is_bull(name):
                     idx = np.flatnonzero(mask)
@@ -103,24 +107,30 @@ def run(root: Path) -> dict[str, Any]:
                 st["hit"] = round(float((s > -0.0).mean()), 3)
                 per_h[k] = st
             head = per_h[HEADLINE[tf]]
+            r_raw = pd.concat(raw[(name, f"{tf}|{HEADLINE[tf]}")]).dropna()
+            raw_view = {"acerto_bruto": round(float((r_raw > 0).mean()), 3),
+                        "movimento_medio_bruto_bps": round(float(r_raw.mean()) * 1e4, 1)}
             trade = None
             if (name, tf) in trades:
                 tr = pd.concat(trades[(name, tf)])
                 r1 = tr[tr["t"] < FIRST_TEST]["ret"].to_numpy()
                 r2 = tr[tr["t"] >= FIRST_TEST]["ret"].to_numpy()
                 allr = tr["ret"].to_numpy()
+                gross = allr + costs.round_trip
                 trade = {"trades": int(allr.size), "win_rate": round(float((allr > 0).mean()), 3),
+                         "pf_antes_taxas": round(_pf(gross), 2), "acerto_antes_taxas": round(float((gross > 0).mean()), 3),
                          "expectancy_pct": round(float(allr.mean()) * 100, 3), "pf": round(_pf(allr), 2),
                          "pf_p1": round(_pf(r1), 2), "pf_p2": round(_pf(r2), 2)}
             bull = is_bull(name)
             verdict = _verdict(head, trade, bull)
             row = {"padrao": name, "tf": tf, "categoria": category(name),
                    "vies": "alta" if bull else ("baixa" if is_bear(name) else "neutro"), "ocorrencias": counts[(name, tf)],
-                   "horizontes": per_h, "operacao": trade, "veredito": verdict}
+                   "horizontes": per_h, "operacao": trade, "veredito": verdict, "visao_bruta": raw_view}
             rows.append(row)
             events.setdefault(name, {})[tf] = {
                 "veredito": verdict, "ocorrencias": counts[(name, tf)],
                 "excesso_bps": round((head["mean_bps_p1"] + head["mean_bps_p2"]) / 2, 1), "acerto": head["hit"],
+                "acerto_bruto": raw_view["acerto_bruto"],
                 "pf_operacao": trade["pf"] if trade else None}
     order = {"funciona": 0, "funciona ao contrário": 1, "direção certa, não paga custos": 2, "sem efeito": 3}
     rows.sort(key=lambda r: (order[r["veredito"]], -abs(r["horizontes"][HEADLINE[r["tf"]]]["mean_bps_p2"])))
@@ -139,7 +149,8 @@ def summarize(rep: dict[str, Any]) -> list[str]:
         lines.append(
             f"{r['veredito']:<31} {r['padrao']:<30} {r['tf']} {r['vies']:<6} n={r['ocorrencias']:<6} "
             f"excesso p1 {h['mean_bps_p1']:+.0f}bps (t {h['t_p1']:+.1f}) p2 {h['mean_bps_p2']:+.0f}bps (t {h['t_p2']:+.1f}) "
-            f"acerto {h['hit']:.0%}" + (f" | trade n={op['trades']} win {op['win_rate']:.0%} PF {op['pf']} "
+            f"acerto {h['hit']:.0%} bruto {r['visao_bruta']['acerto_bruto']:.0%}"
+            + (f" | trade n={op['trades']} win {op['win_rate']:.0%} PF {op['pf']} antes-taxa PF {op['pf_antes_taxas']} "
                                        f"(p1 {op['pf_p1']} p2 {op['pf_p2']}) exp {op['expectancy_pct']:+.2f}%"
                                        if op else ""))
     return lines

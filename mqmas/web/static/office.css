@@ -242,3 +242,8 @@ a { color: var(--accent-2); } a:hover { color: #D6D0FF; }
 .ta-cell span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .ta-cell strong { font-size: 13px; overflow-wrap: anywhere; }
 .lg-badge.mid { background: rgba(251, 193, 94, .14); color: var(--warn); }
+.lv-map { display: flex; flex-direction: column; gap: 6px; }
+.lv-head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+.lv-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.lv-row .src { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-plan { background: var(--tile); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }

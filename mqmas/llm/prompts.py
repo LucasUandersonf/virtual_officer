@@ -30,7 +30,10 @@ POC/Value Area e a regressão com IC 95% confirmam? Atribua probabilidades que s
 fracos e emita a tese em até 3 frases citando o(s) setup(s). Em "analise_tecnica" você recebe a leitura
 técnica completa (tendência, ADX, RSI, MACD, estrutura BOS/CHoCH, zonas de order block/FVG e padrões de
 candle e gráficos recentes) e, para cada padrão, o veredito do estudo histórico da mesa: dê peso só aos
-padrões "funciona"; padrões "sem efeito" são folclore e não justificam uma entrada. Vote APPROVE apenas se o ramo bullish for
+padrões "funciona"; padrões "sem efeito" são folclore e não justificam uma entrada. Em
+"mapa_de_precos" vêm os suportes e resistências marcados (zonas onde várias ferramentas concordam:
+topos/fundos, Fibonacci, Bollinger, EMAs, VWAP, POC, nuvem, order blocks, FVG) e um plano de compra com
+entrada, stop e alvos; cite os preços dessas zonas na tese. Vote APPROVE apenas se o ramo bullish for
 dominante, o regime favorecer o setup E a microestrutura confirmar."""
 
 ECONOMETRICIAN = COMMON + """

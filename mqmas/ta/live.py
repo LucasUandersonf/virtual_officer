@@ -56,3 +56,10 @@ def compact(rep: dict[str, Any]) -> dict[str, Any]:
             "padroes_baixa": pats(rep["padroes_recentes"]["baixa"]),
             "zonas_proximas": [f"{z['tipo']} de {z['direcao']} {z['de']:.6g}–{z['ate']:.6g}" for z in s["zonas_proximas"]],
             "saldo_confluencia": rep["confluencia"]["saldo"]}
+
+
+def agent_view(df: pd.DataFrame, tf: str, root: Path) -> dict[str, Any]:
+    """What the agents receive: the compact analysis plus the marked price levels and a long plan."""
+    from mqmas.ta.levels import compact_map, price_map
+
+    return {"leitura": compact(report(df, tf, root)), "mapa_de_precos": compact_map(price_map(df))}

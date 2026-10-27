@@ -421,6 +421,37 @@ function renderTA(r) {
   }
 }
 
+function renderLevels(m) {
+  const box = $("lv-map");
+  const row = (z, cls) => {
+    const r = el("div", "lv-row");
+    r.append(el("strong", `mono ${cls}`, fmt(z.preco, z.preco < 10 ? 4 : 2)),
+      el("span", "src", `${"●".repeat(Math.min(z.forca, 5))} ${z.fontes.join(", ")}`),
+      el("span", `mono muted-xs`, `${z.distancia_pct >= 0 ? "+" : ""}${z.distancia_pct.toFixed(1)}%`));
+    return r;
+  };
+  const nodes = [el("div", "lv-head", "Resistências")];
+  (m.resistencias || []).slice(0, 4).reverse().forEach((z) => nodes.push(row(z, "neg")));
+  nodes.push(el("div", "lv-head", `Preço ${fmt(m.preco, m.preco < 10 ? 4 : 2)} · Suportes`));
+  (m.suportes || []).slice(0, 4).forEach((z) => nodes.push(row(z, "pos")));
+  const p = m.plano_compra || {};
+  const plan = el("div", "lv-plan");
+  if (p.entrada) {
+    plan.append(el("strong", "", p.valido ? "Plano de compra (válido)" : "Plano de compra (aguardar)"),
+      el("span", "mono", `Entrada ${fmt(p.entrada, 2)} · Stop ${fmt(p.stop, 2)} (${p.risco_pct}%)`),
+      el("span", "mono", `Alvos ${p.alvos.map((x) => fmt(x, 2)).join(" / ")} · R:R ${p.risco_retorno.join(" / ")}`),
+      el("span", "muted-xs", p.motivo));
+  } else {
+    plan.append(el("span", "muted-sm", "Sem zona de compra forte perto do preço: nenhum plano agora."));
+  }
+  nodes.push(plan);
+  box.replaceChildren(...nodes);
+}
+
+async function loadLevels() {
+  try { const r = await fetch("/api/levels/BTC?tf=4h"); if (r.ok) renderLevels(await r.json()); } catch (e) { /* next tick */ }
+}
+
 async function loadTA() {
   try { const r = await fetch("/api/ta/BTC?tf=4h"); if (r.ok) renderTA(await r.json()); } catch (e) { /* next tick */ }
 }
@@ -568,7 +599,8 @@ async function boot() {
   loadLeague();
   loadBook();
   loadTA();
-  setInterval(loadTA, 5 * 60 * 1000);
+  loadLevels();
+  setInterval(() => { loadTA(); loadLevels(); }, 5 * 60 * 1000);
   setInterval(() => { tickTimer(); tickAge(); }, 1000);
 }
 boot();
