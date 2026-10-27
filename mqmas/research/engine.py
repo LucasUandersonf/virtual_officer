@@ -121,6 +121,8 @@ class RiskRules:
     # Dynamic sizing: halve risk while equity sits more than ``dd_throttle`` below its peak (None = off).
     # Per-trade scaling (e.g. volatility targeting) comes from an optional ``risk_mult`` trade column.
     dd_throttle: float | None = None
+    dd_severe: float | None = None  # quarter risk below this drawdown (None = off)
+    heat_max: float | None = None  # cap on the summed open risk, as a fraction of equity (None = off)
 
 
 @dataclass
@@ -141,9 +143,10 @@ def simulate_portfolio(trades: pd.DataFrame, rules: RiskRules, costs: Costs,
         t = t[t["t_in"] < end]
     t = t.sort_values("t_in", kind="stable")
     equity = rules.equity0
-    open_heap: list[tuple[pd.Timestamp, int, float, float, str]] = []
+    open_heap: list[tuple[pd.Timestamp, int, float, float, str, float]] = []
     open_coins: set[str] = set()
     committed = 0.0
+    heat = 0.0
     lock_until: pd.Timestamp | None = None
     streak = 0
     day_pnl: dict[object, float] = {}
@@ -156,9 +159,10 @@ def simulate_portfolio(trades: pd.DataFrame, rules: RiskRules, costs: Costs,
     seq = 0
 
     def close_until(ts: pd.Timestamp) -> None:
-        nonlocal equity, committed, streak, lock_until, peak
+        nonlocal equity, committed, streak, lock_until, peak, heat
         while open_heap and open_heap[0][0] <= ts:
-            t_out, _, notional, ret, coin = heapq.heappop(open_heap)
+            t_out, _, notional, ret, coin, at_risk = heapq.heappop(open_heap)
+            heat -= at_risk
             pnl = notional * ret
             equity += pnl
             peak = max(peak, equity)
@@ -186,14 +190,20 @@ def simulate_portfolio(trades: pd.DataFrame, rules: RiskRules, costs: Costs,
             continue
         loss_per_unit = row.stop_pct + costs.round_trip
         mult = float(row.risk_mult) if has_mult else 1.0
-        if rules.dd_throttle is not None and equity < peak * (1 - rules.dd_throttle):
+        if rules.dd_severe is not None and equity < peak * (1 - rules.dd_severe):
+            mult *= 0.25
+        elif rules.dd_throttle is not None and equity < peak * (1 - rules.dd_throttle):
             mult *= 0.5
-        notional = min(equity * rules.risk_per_trade * mult / loss_per_unit, equity - committed)
+        risk_usd = equity * rules.risk_per_trade * mult
+        if rules.heat_max is not None:
+            risk_usd = min(risk_usd, equity * rules.heat_max - heat)
+        notional = min(max(risk_usd, 0.0) / loss_per_unit, equity - committed)
         if notional < rules.min_notional or equity <= 0:
             skipped += 1
             continue
         seq += 1
-        heapq.heappush(open_heap, (row.t_out, seq, notional, row.ret, row.coin))
+        heapq.heappush(open_heap, (row.t_out, seq, notional, row.ret, row.coin, notional * loss_per_unit))
+        heat += notional * loss_per_unit
         open_coins.add(row.coin)
         committed += notional
         taken.append((row.coin, row.t_in, row.t_out, row.ret, notional, notional * row.ret))

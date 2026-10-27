@@ -440,6 +440,19 @@ class StrategyBook:
                     opened.append(pos)
         return opened
 
+    async def _risk_budget(self, equity: float) -> float:
+        """US$ at risk for a new entry: risk per trade, cut to half below −10 % and to a quarter below −20 % from
+        the equity peak, and capped so the summed open risk of the book stays under ``book_heat_max``."""
+        s = self._s
+        closed = sorted(await self._db.closed_positions(self.mode, limit=100_000),
+                        key=lambda p: p.closed_at or datetime.min.replace(tzinfo=timezone.utc))
+        curve = s.initial_capital_usdt + np.cumsum([p.pnl_usdt or 0.0 for p in closed])
+        peak = max([s.initial_capital_usdt, *curve.tolist()])
+        dd = 1 - equity / peak if peak > 0 else 0.0
+        mult = 0.25 if dd >= s.book_dd_severe else 0.5 if dd >= s.book_dd_throttle else 1.0
+        open_risk = sum(max(p.entry_price - p.stop_price, 0.0) * p.quantity for p in await self.positions())
+        return max(min(equity * s.book_risk_per_trade * mult, equity * s.book_heat_max - open_risk), 0.0)
+
     async def _open_paper(self, sig: Signal, cfg: Config, stop: float, target: float) -> Position | None:
         s = self._s
         ticker = await with_backoff(lambda: self._ex.fetch_ticker(sig.symbol), f"ticker {sig.symbol}")
@@ -453,7 +466,7 @@ class StrategyBook:
         equity = await self._risk.equity_estimate()
         committed = sum(p.quantity * p.entry_price for p in await self._db.active_positions(self.mode))
         loss_per_unit = stop_pct + 2 * (s.fee_rate + s.max_slippage_pct)
-        notional = min(equity * s.book_risk_per_trade / loss_per_unit, max(equity - committed, 0.0))
+        notional = min(await self._risk_budget(equity) / loss_per_unit, max(equity - committed, 0.0))
         below_min = notional < 5.0
         if notional <= 0:
             return None
@@ -488,7 +501,7 @@ class StrategyBook:
         committed = sum(p.quantity * p.entry_price for p in await self._db.active_positions(self.mode))
         free = await self._spot.free_quote()
         loss_per_unit = stop_pct + 2 * (s.fee_rate + s.max_slippage_pct)
-        notional = min(equity * s.book_risk_per_trade / loss_per_unit, max(equity - committed, 0.0), free * 0.98)
+        notional = min(await self._risk_budget(equity) / loss_per_unit, max(equity - committed, 0.0), free * 0.98)
         cid = client_id("e")
         hold_minutes = cfg.exit.hold * tf_ms(cfg.tf) // 60_000
         pos = Position(debate_id=f"book-{int(time.time())}", mode=self.mode, symbol=sig.symbol,

@@ -393,6 +393,15 @@ async def research_talib() -> dict[str, Any]:
     return {"ready": True, "report": json.loads(path.read_text())}
 
 
+@app.get("/api/research/agressivo")
+async def research_aggressive() -> dict[str, Any]:
+    """Swing book under management variants, new signals and a sizing grid (risk, capital, heat, DD protection)."""
+    path = _research_root(_rt().settings) / "aggressive_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.get("/api/research/crosscheck")
 async def research_crosscheck() -> dict[str, Any]:
     """Our engine vs backtesting.py on the same Binance candles and rules."""

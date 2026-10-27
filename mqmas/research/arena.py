@@ -54,7 +54,7 @@ ACCOUNTS = {"US$50 risco 1,5% 3 posições": RiskRules(equity0=50.0, risk_per_tr
 
 def _manage_py(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, atr: np.ndarray, entries: np.ndarray,
                stop_tech: np.ndarray, tgt_r: float, exit_sig: np.ndarray, rt: float, side: float,
-               hold: int) -> np.ndarray:
+               hold: int, be_r: float, trail_r: float, trail_atr: float, low3: bool) -> np.ndarray:
     n = o.size
     out = np.empty((n, 5))
     m = 0
@@ -92,13 +92,15 @@ def _manage_py(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, atr:
                 break
             if h[k] > peak:
                 peak = h[k]
-            if peak >= px + risk and stop < px * (1 + rt):
+            if be_r > 0 and peak >= px + be_r * risk and stop < px * (1 + rt):
                 stop = px * (1 + rt)
-            if peak >= px + 2 * risk and atr[k] > 0:
-                lmin = lo[k]
-                for j in range(max(k - 2, e), k):
-                    lmin = min(lmin, lo[j])
-                trail = max(lmin, peak - 2.5 * atr[k])
+            if peak >= px + trail_r * risk and atr[k] > 0:
+                trail = peak - trail_atr * atr[k]
+                if low3:
+                    lmin = lo[k]
+                    for j in range(max(k - 2, e), k):
+                        lmin = min(lmin, lo[j])
+                    trail = max(lmin, trail)
                 if trail > stop:
                     stop = trail
             k += 1
@@ -121,11 +123,14 @@ except ImportError:  # pragma: no cover
 
 
 def manage(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, atr: np.ndarray, entries: np.ndarray,
-           stop_tech: np.ndarray, tgt_r: float, exit_sig: np.ndarray, costs: Costs, hold: int) -> np.ndarray:
+           stop_tech: np.ndarray, tgt_r: float, exit_sig: np.ndarray, costs: Costs, hold: int,
+           be_r: float = 1.0, trail_r: float = 2.0, trail_atr: float = 2.5, low3: bool = True) -> np.ndarray:
+    """Library management; ``be_r`` = 0 switches the breakeven off, ``low3`` = False trails on ATR only."""
     f8 = np.ascontiguousarray
     return np.asarray(_manage(f8(o, float), f8(h, float), f8(lo, float), f8(c, float), f8(np.nan_to_num(atr), float),
                               f8(entries, bool), f8(stop_tech, float), float(tgt_r), f8(exit_sig, bool),
-                              float(costs.round_trip), float(costs.fee + costs.slippage), int(hold)))
+                              float(costs.round_trip), float(costs.fee + costs.slippage), int(hold),
+                              float(be_r), float(trail_r), float(trail_atr), bool(low3)))
 
 
 # ---------------------------------------------------------------------- data and signals
@@ -278,7 +283,9 @@ def run_tf(lab: Lab, tf: str, costs: Costs, regime: pd.Series, frame_fn: Callabl
                 if not ent.any():
                     continue
                 stop = stop_for(st, recent, cand["membros"], cols)
-                t = manage(o, h, lo, c, atr, ent, stop, cand["alvo_r"], exits, costs, HOLD[tf])
+                t = manage(o, h, lo, c, atr, ent, stop, cand["alvo_r"], exits, costs, HOLD[tf],
+                           cand.get("be_r", 1.0), cand.get("trail_r", 2.0), cand.get("trail_atr", 2.5),
+                           cand.get("low3", True))
                 if len(t):
                     rows[cand["key"]].append(pd.DataFrame({
                         "coin": coin, "t_in": df.index[t[:, 0].astype(int)],
