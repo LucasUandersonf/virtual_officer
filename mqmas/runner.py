@@ -22,11 +22,14 @@ from typing import Any
 import httpx
 
 from mqmas.config import Settings, get_settings
+from mqmas.llm.router import LLMRouter
 from mqmas.logging_setup import configure_logging
 from mqmas.ops import Notifier
 from mqmas.persistence.db import Database
 from mqmas.research.data import PUBLIC_DATA_URL
+from mqmas.trend.committee import Committee, render_board
 from mqmas.trend.live import TrendAllocator
+from mqmas.trend.specialists import Fundamental, Risk, Sentiment, Specialist, Technical
 
 log = logging.getLogger("mqmas.runner")
 
@@ -46,18 +49,37 @@ def build_exchange(s: Settings) -> Any:
     return ex
 
 
+def build_committee(s: Settings, db: Database, http: httpx.AsyncClient, router: LLMRouter) -> Committee:
+    specialists: list[Specialist] = [Technical(), Fundamental(http), Sentiment(http), Risk(router)]
+    active = {x.strip() for x in s.trend_active_specialists.split(",") if x.strip()}
+    unknown = active - {sp.name for sp in specialists}
+    if unknown:
+        raise ValueError(f"TREND_ACTIVE_SPECIALISTS: especialista desconhecido {sorted(unknown)}")
+    return Committee(specialists, active, db)
+
+
 async def run(argv: list[str], settings: Settings | None = None, exchange: Any = None) -> dict[str, Any]:
     ap = argparse.ArgumentParser(prog="python -m mqmas.runner")
     ap.add_argument("--status", action="store_true", help="print the saved state and exit (no orders)")
     ap.add_argument("--reset-halt", action="store_true", help="clear a drawdown halt; trading resumes next run")
+    ap.add_argument("--placar", action="store_true", help="print the specialists' scoreboard and exit (no orders)")
     args = ap.parse_args(argv)
     s = settings or get_settings()
     db = Database(s.db_path)
     await db.connect()
     ex = exchange if exchange is not None else build_exchange(s)
     notifier = Notifier(s)
-    alloc = TrendAllocator(s, db, ex, notify=notifier.send if notifier.enabled else None)
+    http = httpx.AsyncClient(timeout=15)
+    router = LLMRouter.from_settings(s)
+    committee = build_committee(s, db, http, router) if s.trend_committee else None
+    if committee is not None:
+        await committee.ensure_schema()
+    alloc = TrendAllocator(s, db, ex, notify=notifier.send if notifier.enabled else None, committee=committee)
     try:
+        if args.placar:
+            board = await committee.scoreboard() if committee else []
+            print(render_board(board))
+            return {"placar": board}
         if args.status or args.reset_halt:
             st = await alloc.load()
             if args.reset_halt:
@@ -80,6 +102,8 @@ async def run(argv: list[str], settings: Settings | None = None, exchange: Any =
     finally:
         if exchange is None:
             await ex.close()
+        await http.aclose()
+        await router.aclose()
         await db.close()
 
 

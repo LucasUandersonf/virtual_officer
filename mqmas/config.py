@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     trend_max_drawdown: float = Field(default=0.35, gt=0, le=0.60)  # from the equity peak: sell all and halt
     trend_live_enabled: bool = False  # second switch: real orders need TRADING_MODE=live AND this
     trend_kill_switch: bool = False  # true: sell everything on the next run and stay flat
+    trend_committee: bool = True  # the specialists review every proposed buy (in shadow unless listed below)
+    # comma list of specialists whose votes change orders (tecnico,fundamentalista,sentimento,risco);
+    # empty = all in shadow, so the desk trades exactly like the backtest while the scoreboard collects evidence
+    trend_active_specialists: str = ""
 
     # --- Alerts, heartbeat, backups ------------------------------------------------------
     telegram_bot_token: SecretStr | None = None

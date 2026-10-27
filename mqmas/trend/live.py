@@ -32,8 +32,10 @@ from mqmas.data.market_feed import with_backoff
 from mqmas.execution.spot import Fill, OrderRefused, SpotExecutor, client_id
 from mqmas.persistence.db import Database
 from mqmas.research.data import is_crypto
+from mqmas.trend.committee import Committee
 from mqmas.trend.model import CRASH_STOP_ATR, TrendParams, atr, weights_frame
-from mqmas.trend.rebalance import MIN_ORDER_USDT, next_stop, plan_orders
+from mqmas.trend.rebalance import MIN_ORDER_USDT, Order, next_stop, plan_orders
+from mqmas.trend.specialists import Proposal
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ class TrendState:
     blocked: dict[str, float] = field(default_factory=dict)  # coin -> signal at its stop-out
     signals: dict[str, float] = field(default_factory=dict)
     targets: dict[str, float] = field(default_factory=dict)
+    reviews: dict[str, Any] = field(default_factory=dict)  # last committee review per coin
     peak: float = 0.0
     halted: str | None = None
     trips: list[dict[str, Any]] = field(default_factory=list)
@@ -89,8 +92,10 @@ def closed_day(now_ms: int) -> str:
 
 
 class TrendAllocator:
-    def __init__(self, settings: Settings, db: Database, exchange: Any, notify: Notify | None = None) -> None:
+    def __init__(self, settings: Settings, db: Database, exchange: Any, notify: Notify | None = None,
+                 committee: Committee | None = None) -> None:
         self._s = settings
+        self.committee = committee
         self._db = db
         self._ex = exchange
         self._notify = notify
@@ -322,6 +327,8 @@ class TrendAllocator:
             await self._sync_live_balances()
         values = {s: h.qty * px[s]["last"] for s, h in st.holdings.items()}
         orders = plan_orders(st.targets, values, st.cash, min_order=MIN_ORDER_USDT)
+        if self.committee is not None:
+            orders = await self._review(day, orders, daily, values, px)
         for o in orders:
             if o.side == "sell":
                 qty = None if o.close_all else o.value / px[o.symbol]["last"]
@@ -334,6 +341,27 @@ class TrendAllocator:
         if not orders:
             self._note(f"rebalanceamento de {day}: nada a ajustar")
         return True
+
+    async def _review(self, day: str, orders: list[Order], daily: dict[str, pd.DataFrame], values: dict[str, float],
+                      px: dict[str, dict[str, float]]) -> list[Order]:
+        """Send each proposed buy to the committee; only active specialists can shrink or stop it."""
+        assert self.committee is not None
+        st = self.state
+        equity = st.cash + sum(values.values())
+        buys = [o.symbol for o in orders if o.side == "buy"]
+        await self.committee.fill_outcomes({s: d["close"] for s, d in daily.items()}, day)
+        if not buys or equity <= 0:
+            return orders
+        props = [Proposal(s, st.targets[s], values.get(s, 0.0) / equity, st.signals.get(s, 0.0), px[s]["last"],
+                          daily[s]) for s in buys if s in daily]
+        reviews = await self.committee.review(day, props)
+        st.reviews = {s: {"proposto": r.proposed, "final": round(r.final, 4),
+                          "pareceres": [{"especialista": o.specialist, "voto": o.verdict, "motivo": o.reason}
+                                        for o in r.opinions]} for s, r in reviews.items()}
+        for s, r in reviews.items():
+            self._note("COMITÊ " + r.summary)
+            st.targets[s] = round(r.final, 4)
+        return plan_orders(st.targets, values, st.cash, min_order=MIN_ORDER_USDT)
 
     async def _sync_live_balances(self) -> None:
         """Never act on more than the account holds: cap cash and holdings by the exchange balances."""
