@@ -134,10 +134,25 @@ REVIEW_TASK = """
 TAREFA ESPECIAL: revisão crítica de um relatório de backtest trazido pelo dono da mesa. Em
 "fatos_calculados" estão as contas feitas em Python (trate como fatos; não recalcule). Em
 "evidencia_da_biblioteca" está o histórico medido pela mesa dos padrões usados (veredito, acerto já
-descontada a tendência, PF após taxas). Responda com severidade: o sistema é viável para capital real?
-O par acerto/payoff compensa o drawdown? Que métricas mascaram vulnerabilidades? Cite números.
-Responda em JSON com analysis (até 6 frases), vulnerabilities (lista curta), verdict
+descontada a tendência, PF após taxas). Regras de leitura:
+- max_drawdown_pct e net_return_pct já são % da conta: nunca os converta para outra base.
+- Há DUAS hipóteses e elas não se misturam: "hipotese_liquida" (acerto/payoff já líquidos) e
+  "hipotese_bruta" (acerto/payoff antes das taxas). Se hipotese_liquida.probabilidade_de_um_drawdown_assim
+  for < 0,01, diga primeiro que o relatório é INCONSISTENTE (os números não podem ser todos líquidos) e
+  use a hipótese bruta no resto da análise.
+- Não repita o que já está em "falas_anteriores": acrescente pontos novos da sua especialidade ou discorde.
+FOCO: {foco}
+Responda em JSON com analysis (até 6 frases, cite números), vulnerabilities (lista curta), verdict
 (VIÁVEL | NÃO VIÁVEL | INCONCLUSIVO) e vote (APPROVE só se for viável para capital real)."""
+
+FOCUS = {
+    AgentRole.ECONOMETRICIAN: "consistência interna do relatório, significância (t, p, amostra necessária), sequência de "
+                              "perdas e quanto da vantagem os custos comem",
+    AgentRole.CHIEF_QUANT: "os padrões e a confluência: o que a biblioteca mediu para cada padrão e para a combinação; "
+                           "se juntar padrões sem efeito cria vantagem; que ajuste de setup testar",
+    AgentRole.CRO: "pre-mortem do capital real: risco de ruína, drawdown esperado em 1000 trades, tamanho de posição "
+                   "e mínimo da Binance, e a condição exata em que você aprovaria",
+}
 
 
 async def debate(router: LLMRouter, rep: TradeReport, study: dict[str, Any] | None) -> dict[str, Any]:
@@ -150,7 +165,7 @@ async def debate(router: LLMRouter, rep: TradeReport, study: dict[str, Any] | No
     said: list[dict[str, Any]] = []
     messages: list[AgentMessage] = []
     for role, prompt in order:
-        sp = _Speaker(router, role, prompt + REVIEW_TASK)
+        sp = _Speaker(router, role, prompt + REVIEW_TASK.replace("{foco}", FOCUS[role]))
         res = await sp.ask({**base, "falas_anteriores": said}, ReviewOpinion)
         if res is None:
             messages.append(sp.abstain("review"))
