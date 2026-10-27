@@ -414,17 +414,21 @@ function renderSectors(sec, summary, activity) {
     growth: [["Kits", sec.growth.kits], ["E-mails", sec.growth.emails], ["Posts", sec.growth.posts], ["Landing pages", sec.growth.kits]],
     sales: [["Visitas 14d", (sec.sales.funnel || []).reduce((t, f) => t + f.views, 0)], ["Cliques comprar", (sec.sales.funnel || []).reduce((t, f) => t + f.clicks, 0)],
       ["Visita→compra", (() => { const f = sec.sales.funnel || []; const v = f.reduce((t, x) => t + x.views, 0); const n = f.reduce((t, x) => t + x.sales, 0); return v ? `${(100 * n / v).toFixed(1)}%` : "—"; })()],
+      ["Webhook Stripe", (sec.sales.setup || {}).stripe_webhook || "sem Stripe"], ["Apple/Google Pay", ((sec.sales.setup || {}).wallets || "—").replace("Apple Pay / Google Pay: ", "")],
       ["Anúncios ativos", sec.sales.listings_live], ["Manuais", sec.sales.listings_manual], ["Sem entrega", sec.sales.undelivered],
       ["Checkouts abandonados", (sec.sales.checkout || {}).abandoned || 0], ["E-mails de recuperação", (sec.sales.checkout || {}).recovery_emails || 0],
       ["Pagamentos recusados", (sec.sales.checkout || {}).failed || 0]],
     cfo: [["Lucro mês", usd(sec.cfo.profit_mtd)], ["Ritmo mês", usd(sec.cfo.revenue.run_rate)], ["Equilíbrio", `${sec.cfo.break_even.sales_needed} vendas`], ["IA hoje", `${sec.cfo.llm_calls_today}/${sec.cfo.llm_budget}`],
       ["Produtos parados 21d+", (sec.cfo.portfolio || []).filter((x) => ["reposition", "shutdown"].includes(x.health)).length],
       ["Margem 30d (top)", Object.values(sec.cfo.topic_margins || {}).length ? usd(Math.max(...Object.values(sec.cfo.topic_margins))) : "—"],
-      ["Runway", !sec.cfo.runway ? "—" : !sec.cfo.runway.cash_set ? "defina o caixa" : sec.cfo.runway.months !== null ? `${sec.cfo.runway.months} meses` : "sem queima"],
+      ["Runway", !sec.cfo.runway ? "—" : !sec.cfo.runway.cash_set ? "aguardando o saldo do Stripe" : sec.cfo.runway.months !== null ? `${sec.cfo.runway.months} meses` : "sem queima"],
       ["Infra/mês", sec.cfo.infra && sec.cfo.infra.month_usd !== undefined ? `${usd(sec.cfo.infra.month_usd)}${sec.cfo.infra.measured ? " (medido)" : " (estimado)"}` : "—"],
       ["Austeridade", sec.cfo.infra && sec.cfo.infra.austerity ? "LIGADA" : "não"], ["LTV", usd((sec.cfo.ltv_cac || {}).ltv_usd || 0)],
       ["CAC", (sec.cfo.ltv_cac || {}).organic_only ? "orgânico ($0)" : usd((sec.cfo.ltv_cac || {}).cac_usd || 0)],
-      ["Imposto+câmbio mês", usd(((sec.cfo.pnl_month || {}).tax_usd || 0) + ((sec.cfo.pnl_month || {}).fx_usd || 0))]],
+      ["Imposto+câmbio mês", usd(((sec.cfo.pnl_month || {}).tax_usd || 0) + ((sec.cfo.pnl_month || {}).fx_usd || 0))],
+      ["Moeda de recebimento", `${((sec.cfo.params || {}).payout_currency || "usd").toUpperCase()} · ${(sec.cfo.params || {}).payout_source || ""}`],
+      ["Imposto", `${(((sec.cfo.params || {}).tax_rate || 0) * 100).toFixed(1)}% · ${(sec.cfo.params || {}).tax_source || ""}`],
+      ["Caixa", (sec.cfo.params || {}).cash_usd === null || (sec.cfo.params || {}).cash_usd === undefined ? "desconhecido (conecte o Stripe)" : `${usd(sec.cfo.params.cash_usd)} · ${sec.cfo.params.cash_source}`]],
   };
   for (const r of ROLES) {
     const a = AGENTS[r], info = summary.agents[r] || {};

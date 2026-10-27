@@ -143,10 +143,23 @@ Stack completa (Postgres + Redis + n8n): `docker compose up --build` (escritóri
 1. **New Project → Deploy from GitHub repo** → este repositório. No serviço, em **Settings → Root Directory**, coloque `studio`. O `studio/railway.json` cuida do resto (Dockerfile, healthcheck `/health`, 1 réplica).
 2. **+ New → Database → PostgreSQL.** No serviço do escritório, crie a variável `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 3. **Volume:** monte um volume em `/data`, onde ficam os `.zip` dos produtos.
-4. **Variables:** `ADMIN_TOKEN`, `PUBLIC_BASE_URL` (o domínio gerado pela Railway) e as chaves gratuitas de IA que quiser (Groq/Gemini/OpenRouter). Para vender: `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`, com o webhook apontando para `https://<domínio>/webhooks/stripe`. Para entregar: `RESEND_API_KEY`. Para os alertas: Telegram ou Discord.
-5. **Settings → Networking → Generate Domain.** Abra o domínio: é o escritório.
+4. **Settings → Networking → Generate Domain.** O escritório usa esse domínio sozinho, sem precisar de `PUBLIC_BASE_URL`.
+5. **Variables:** `ADMIN_TOKEN`, as chaves gratuitas de IA que quiser (Groq/Gemini/OpenRouter), `STRIPE_SECRET_KEY` para vender, `RESEND_API_KEY` para entregar e Telegram ou Discord para os alertas.
 
-**Custo mensal estimado:** web ~US$ 5 + Postgres ~US$ 1 a 3. Redis e n8n são **opcionais**: o escritório usa uma fila em memória e entrega os workflows como arquivo, então não precisa de n8n próprio. Se você adicionar esses serviços, informe os valores em `RAILWAY_REDIS_USD` e `RAILWAY_N8N_USD` para o P&L contar. Os valores `RAILWAY_*_USD` são estimativas que entram no custo diário. Confira o consumo real em **Railway → Usage** e ajuste.
+**O que os agentes configuram sozinhos** (no primeiro ciclo de cada dia, com o resultado nos painéis de Leo e Nina):
+
+| Quem | O quê | Como |
+|---|---|---|
+| Leo | Webhook do Stripe com todos os eventos (vendas, abandonos, reembolsos, disputas, falhas) | Cria o endpoint pela API e guarda o segredo de assinatura no banco. Se já existir um endpoint cujo segredo ele não conhece, troca por um novo |
+| Leo | Apple Pay e Google Pay | Liga na configuração de métodos de pagamento da conta |
+| Leo | Ping de vendas do Gumroad | Inscreve-se e gera a chave da URL, se você não definir uma |
+| Nina | País e moeda de recebimento | Lê da conta Stripe (ex.: BR, BRL) e passa a descontar o câmbio no P&L |
+| Nina | Caixa do runway | Saldo real do Stripe (disponível + pendente), convertido para USD pela cotação do dia |
+| Nina | Imposto | Provisão conservadora pelo país da conta (Brasil: 6% da receita, 1ª faixa do Simples Nacional, Anexo III). **É uma reserva, não orientação fiscal:** confirme com seu contador e defina `TAX_RATE_PCT` com a alíquota certa |
+
+Qualquer variável que você definir (`TAX_RATE_PCT`, `PAYOUT_CURRENCY`, `CASH_BALANCE_USD`, `STRIPE_WEBHOOK_SECRET`) prevalece sobre o que os agentes descobriram.
+
+**Custo mensal estimado:** web ~US$ 5 + Postgres ~US$ 1 a 3. Redis e n8n são **opcionais**: o escritório usa uma fila em memória e entrega os workflows como arquivo, então não precisa de n8n próprio. Se você adicionar esses serviços, informe os valores em `RAILWAY_REDIS_USD` e `RAILWAY_N8N_USD` para o P&L contar. Os valores `RAILWAY_*_USD` são estimativas que entram no custo diário. Com `RAILWAY_API_TOKEN`, a Nina mede o consumo real.
 
 **Escalar com Redis (opcional):** com `REDIS_URL` definido, rode um segundo serviço com o comando `python -m app.worker` e coloque `AGENTS_IN_WEB=false` no serviço web. Os agentes passam a rodar no worker, e o web só serve o escritório e retransmite os eventos.
 

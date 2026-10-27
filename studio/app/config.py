@@ -7,14 +7,16 @@ built-in playbooks (see ``app/agents/playbook.py``).
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # empty variables count as unset (so "auto" settings stay automatic when left blank on Railway)
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     # --- core -------------------------------------------------------------
     database_url: str = "sqlite+aiosqlite:///./data/studio.db"
@@ -96,11 +98,11 @@ class Settings(BaseSettings):
     # Nina's fee/FX/tax model (international sales)
     stripe_intl_card_pct: float = 0.015  # extra fee on non-domestic cards
     intl_share: float = 0.7  # expected share of buyers paying with a foreign card (global market)
-    payout_currency: str = "usd"  # currency your bank receives; != usd adds the conversion fee below
+    payout_currency: str = ""  # currency your bank receives; empty = Nina reads it from the Stripe account
     fx_conversion_pct: float = 0.02
-    tax_rate_pct: float = 0.0  # tax on gross revenue in your country (e.g. Simples Nacional); 0 = not modeled
+    tax_rate_pct: float | None = None  # tax on gross revenue; empty = Nina provisions a conservative rate for your country
     # Runway and cost control
-    cash_balance_usd: float = 0.0  # starting cash set aside for the studio
+    cash_balance_usd: float | None = None  # cash set aside for the studio; empty = Nina uses the real Stripe balance
     infra_budget_usd: float = 10.0  # monthly infrastructure ceiling; above it Nina switches to austerity mode
     ad_spend_monthly_usd: float = 0.0  # paid acquisition (CAC); 0 = organic only
     # Railway usage (optional): real resource consumption instead of the RAILWAY_*_USD estimates.
@@ -122,6 +124,14 @@ class Settings(BaseSettings):
         if v.startswith("postgresql://"):
             v = "postgresql+asyncpg://" + v[len("postgresql://"):]
         return v
+
+    @model_validator(mode="after")
+    def _railway_domain(self) -> Settings:
+        # Railway injects the generated domain: use it when PUBLIC_BASE_URL was left at the local default
+        dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+        if dom and "localhost" in self.public_base_url:
+            self.public_base_url = f"https://{dom}"
+        return self
 
     @property
     def railway_monthly_usd(self) -> float:

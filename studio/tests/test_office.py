@@ -241,3 +241,59 @@ async def test_cfo_runway_break_even_and_ltv(office, settings):
     assert lc["organic_only"] and lc["ltv_cac"] is None
     st = await office.cfo.infra_control()
     assert not st["measured"] and not st["austerity"] and office.ctx.llm.budget_factor == 1.0
+
+
+async def test_agents_self_configure_from_stripe(tmp_path):
+    """Leo creates the webhook (and keeps its secret) + turns on wallets; Nina reads country, currency, cash, tax."""
+    import httpx
+
+    from app.agents.office import Office
+    from app.services import finance
+
+    calls = []
+
+    def stripe_api(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.path))
+        path = req.url.path
+        if req.url.host == "open.er-api.com":
+            return httpx.Response(200, json={"rates": {"BRL": 5.0}})
+        if path == "/v1/account":
+            return httpx.Response(200, json={"country": "BR", "default_currency": "brl"})
+        if path == "/v1/balance":
+            return httpx.Response(200, json={"available": [{"amount": 50000, "currency": "brl"}], "pending": [{"amount": 10000, "currency": "brl"}]})
+        if path == "/v1/webhook_endpoints" and req.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        if path == "/v1/webhook_endpoints" and req.method == "POST":
+            return httpx.Response(200, json={"id": "we_1", "secret": "whsec_created_by_leo"})
+        if path == "/v1/payment_method_configurations" and req.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "pmc_1", "is_default": True, "apple_pay": {"display_preference": {"value": "off"}}}]})
+        if path.startswith("/v1/payment_method_configurations/"):
+            return httpx.Response(200, json={"id": "pmc_1"})
+        return httpx.Response(404, json={})
+
+    s = Settings(_env_file=None, database_url=f"sqlite+aiosqlite:///{tmp_path}/a.db", artifacts_dir=str(tmp_path / "a"),
+                 research_offline=True, theatre_delay_sec=0, stripe_secret_key="sk_test_x", public_base_url="https://studio.example.com")
+    ctx = build_context(s)
+    await ctx.http.aclose()
+    ctx.http = httpx.AsyncClient(transport=httpx.MockTransport(stripe_api))
+    await ctx.db.init()
+    o = Office(ctx)
+    rep = await o.sales.self_configure()
+    assert rep["stripe_webhook"].startswith("created") and "turned on" in rep["wallets"]
+    assert (await ctx.db.get_state("stripe_webhook"))["secret"] == "whsec_created_by_leo"
+    await o.cfo.self_configure()
+    fp = await finance.fin_params(ctx.db, s)
+    assert fp["payout_currency"] == "brl" and fp["country"] == "BR"
+    assert fp["cash_usd"] == 120.0 and fp["cash_source"].startswith("Stripe")  # R$ 600 / 5
+    assert fp["tax_rate"] == 0.06 and "provision" in fp["tax_source"]
+    explicit = Settings(_env_file=None, database_url=s.database_url, tax_rate_pct=0.11, payout_currency="usd")
+    fp2 = await finance.fin_params(ctx.db, explicit)
+    assert fp2["tax_rate"] == 0.11 and fp2["payout_currency"] == "usd"  # explicit settings always win
+    await ctx.http.aclose()
+    await ctx.db.close()
+
+
+def test_railway_domain_becomes_public_url(monkeypatch):
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "studio-production.up.railway.app")
+    assert Settings(_env_file=None).public_base_url == "https://studio-production.up.railway.app"
+    assert Settings(_env_file=None, public_base_url="https://my.shop").public_base_url == "https://my.shop"

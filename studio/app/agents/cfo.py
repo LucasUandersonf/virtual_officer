@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 
 from app.agents.base import Agent
 from app.integrations import railway
-from app.integrations.payments import estimate_fee
+from app.integrations.payments import StripeClient, estimate_fee
 from app.models import Idea, Product, Sale, utcnow
 from app.services import finance
 
@@ -133,6 +133,33 @@ class CFO(Agent):
         total_live = sum(live.values()) or 1
         share = self.ctx.settings.monthly_fixed_costs_usd * days / 30 / total_live
         return {t: round(m / (share * max(live.get(t, 1), 1)), 2) if share else m for t, m in margins.items()}
+
+    async def self_configure(self) -> dict[str, Any]:
+        """Nina discovers what she needs from the Stripe account: country, payout currency and real cash (balance)."""
+        s = self.ctx.settings
+        prev = await self.ctx.db.get_state("autoconfig_finance")
+        if not s.stripe_secret_key:
+            return prev
+        stripe = StripeClient(s, self.ctx.http)
+        out = dict(prev)
+        try:
+            acc = await stripe.account()
+            out.update(country=acc["country"], payout_currency=acc["default_currency"])
+            total = 0.0
+            for row in await stripe.balance():
+                rate = await finance.usd_rate(self.ctx.http, row["currency"])
+                if rate:
+                    total += finance.from_minor(row["amount"], row["currency"]) / rate
+            out["cash_usd"] = round(total, 2)
+            out["checked_at"] = utcnow().isoformat(timespec="seconds")
+        except Exception as exc:
+            out["error"] = str(exc)[:200]
+        await self.ctx.db.set_state("autoconfig_finance", out)
+        fp = await finance.fin_params(self.ctx.db, s)
+        await self.log("setup", f"Finance setup: country {fp['country'] or '?'}, payout {fp['payout_currency'].upper()} "
+                                f"({fp['payout_source']}), cash ${fp['cash_usd'] or 0:.2f} ({fp['cash_source']}), "
+                                f"tax {fp['tax_rate']:.0%} ({fp['tax_source']})")
+        return out
 
     async def infra_control(self) -> dict[str, Any]:
         """Runway & cost control: measure Railway when possible; above INFRA_BUDGET_USD switch to austerity."""

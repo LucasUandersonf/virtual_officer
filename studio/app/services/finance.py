@@ -43,6 +43,50 @@ async def accrue_costs(db: Database, s: Settings, day: date | None = None, railw
     return added
 
 
+# Conservative tax provisions by Stripe account country, used only when TAX_RATE_PCT is not set. A reserve, not tax
+# advice: BR = Simples Nacional, first bracket of Anexo III (6 % of revenue); confirm the real rate with an accountant.
+TAX_PROVISION = {"BR": 0.06}
+
+
+ZERO_DECIMAL = {"bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"}
+
+
+def from_minor(amount: int, currency: str) -> float:
+    return float(amount) if currency.lower() in ZERO_DECIMAL else amount / 100
+
+
+async def usd_rate(client: Any, currency: str) -> float | None:
+    """Units of ``currency`` per 1 USD (free open.er-api.com, no key). None when unavailable."""
+    if currency.lower() == "usd":
+        return 1.0
+    try:
+        r = await client.get("https://open.er-api.com/v6/latest/USD")
+        return float(r.json()["rates"][currency.upper()])
+    except Exception:
+        return None
+
+
+async def fin_params(db: Database, s: Settings) -> dict[str, Any]:
+    """Effective payout currency, tax rate and cash: explicit settings win, else what Nina discovered."""
+    auto = await db.get_state("autoconfig_finance")
+    payout = (s.payout_currency or auto.get("payout_currency") or "usd").lower()
+    if s.tax_rate_pct is not None:
+        tax, tax_src = s.tax_rate_pct, "TAX_RATE_PCT"
+    elif auto.get("country") in TAX_PROVISION:
+        tax, tax_src = TAX_PROVISION[auto["country"]], f"provision for {auto['country']} (Nina)"
+    else:
+        tax, tax_src = 0.0, "not modeled (set TAX_RATE_PCT)"
+    if s.cash_balance_usd is not None:
+        cash, cash_src = s.cash_balance_usd, "CASH_BALANCE_USD"
+    elif auto.get("cash_usd") is not None:
+        cash, cash_src = float(auto["cash_usd"]), "Stripe balance (Nina)"
+    else:
+        cash, cash_src = None, "unknown"
+    return {"payout_currency": payout, "payout_source": "PAYOUT_CURRENCY" if s.payout_currency else
+            ("Stripe account (Nina)" if auto.get("payout_currency") else "default"), "tax_rate": tax, "tax_source": tax_src,
+            "cash_usd": cash, "cash_source": cash_src, "country": auto.get("country", "")}
+
+
 async def pnl(db: Database, s: Settings, since: date | None = None) -> dict[str, Any]:
     async with db.session() as ses:
         q = select(func.coalesce(func.sum(Sale.gross_cents), 0), func.coalesce(func.sum(Sale.fee_cents), 0), func.count(Sale.id)
@@ -58,8 +102,9 @@ async def pnl(db: Database, s: Settings, since: date | None = None) -> dict[str,
         costs = {k: int(v) for k, v in (await ses.execute(c)).all()}
     total_costs = sum(costs.values())
     net = int(gross) - int(fees)
-    fx = round(net * s.fx_conversion_pct) if s.payout_currency.lower() != "usd" else 0
-    tax = round(gross * s.tax_rate_pct)
+    fp = await fin_params(db, s)
+    fx = round(net * s.fx_conversion_pct) if fp["payout_currency"] != "usd" else 0
+    tax = round(gross * fp["tax_rate"])
     return {"gross_usd": gross / 100, "fees_usd": fees / 100, "net_revenue_usd": net / 100, "sales": int(n),
             "refunds_usd": refunds / 100, "costs_usd": total_costs / 100, "costs_by_category_usd": {k: v / 100 for k, v in costs.items()},
             "fx_usd": fx / 100, "tax_usd": tax / 100, "payout_usd": (net - fx) / 100,
@@ -137,7 +182,10 @@ async def goals(db: Database, s: Settings) -> dict[str, Any]:
     avg_net, real = await avg_net_per_sale(db, s)
     monthly_cost = s.monthly_fixed_costs_usd
     burn = monthly_cost - run_rate
-    cash = s.cash_balance_usd + (await pnl(db, s))["profit_usd"]
+    fp = await fin_params(db, s)
+    # explicit cash is a starting amount (add the studio's profit since); the Stripe balance already includes sales
+    cash_known = fp["cash_usd"] is not None
+    cash = (fp["cash_usd"] or 0.0) + ((await pnl(db, s))["profit_usd"] if fp["cash_source"] == "CASH_BALANCE_USD" else 0.0)
     return {
         "revenue": {"label": "Monthly net revenue", "current": mtd["net_revenue_usd"], "target": s.goal_monthly_revenue_usd,
                     "run_rate": round(run_rate, 2), "pct": min(1.0, mtd["net_revenue_usd"] / max(s.goal_monthly_revenue_usd, 1))},
@@ -145,7 +193,9 @@ async def goals(db: Database, s: Settings) -> dict[str, Any]:
         "break_even": {"monthly_cost_usd": monthly_cost, "avg_net_per_sale_usd": round(avg_net, 2), "from_real_sales": real,
                        "sales_needed": math.ceil(monthly_cost / avg_net) if monthly_cost and avg_net > 0 else 0,
                        "covered": mtd["net_revenue_usd"] >= monthly_cost * today.day / days_in_month},
-        "runway": {"cash_usd": round(cash, 2), "monthly_burn_usd": round(max(burn, 0.0), 2), "cash_set": s.cash_balance_usd > 0,
+        "runway": {"cash_usd": round(cash, 2), "monthly_burn_usd": round(max(burn, 0.0), 2), "cash_set": cash_known,
+                   "cash_source": fp["cash_source"], "payout_currency": fp["payout_currency"], "tax_rate": fp["tax_rate"],
+                   "tax_source": fp["tax_source"],
                    "months": None if burn <= 0 else round(max(cash, 0.0) / burn, 1)},
         "products_week": {"current": products_week, "target": s.goal_products_per_week},
         "ideas_week": {"current": ideas_week, "target": s.goal_ideas_per_week},

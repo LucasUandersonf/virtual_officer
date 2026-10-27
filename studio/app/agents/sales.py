@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.agents.base import Agent
 from app.agents.frameworks import PRICE_MAX, PRICE_MIN, charm_price
+from app.config import secret
 from app.integrations.payments import (
     CheckoutSignal,
     GumroadClient,
@@ -101,6 +102,52 @@ class Sales(Agent):
             await self.log("publish_blocked", f"{product.name} not live yet: {why}", product_id=product.id)
             await self.status("blocked", "Waiting for a sales platform key")
         return out
+
+    STRIPE_EVENTS = ["checkout.session.completed", "checkout.session.expired", "charge.refunded", "charge.dispute.created",
+                     "payment_intent.payment_failed"]
+
+    async def self_configure(self) -> dict[str, Any]:
+        """Leo sets up his own plumbing: Stripe webhook (all events he listens to) + wallets, Gumroad sale pings."""
+        s = self.ctx.settings
+        clients = self._clients()
+        report: dict[str, Any] = {}
+        public = s.public_base_url.startswith("https://") and "localhost" not in s.public_base_url
+        stripe = clients.get("stripe")
+        if isinstance(stripe, StripeClient):
+            if not public:
+                report["stripe_webhook"] = "waiting for a public https PUBLIC_BASE_URL (Railway domain)"
+            else:
+                stored = await self.ctx.db.get_state("stripe_webhook")
+                known = secret(s.stripe_webhook_secret) or stored.get("secret", "")
+                try:
+                    res = await stripe.ensure_webhook(f"{s.public_base_url}/webhooks/stripe", self.STRIPE_EVENTS, known)
+                    if res.get("secret"):
+                        await self.ctx.db.set_state("stripe_webhook", {"id": res["id"], "secret": res["secret"]})
+                    report["stripe_webhook"] = f"{res['action']} ({len(self.STRIPE_EVENTS)} events)"
+                except Exception as exc:
+                    report["stripe_webhook"] = f"error: {str(exc)[:160]}"
+            try:
+                w = await stripe.enable_wallets()
+                report["wallets"] = f"Apple Pay / Google Pay: {w['action']}"
+            except Exception as exc:
+                report["wallets"] = f"error: {str(exc)[:160]} (enable them in Stripe -> Settings -> Payment methods)"
+        gum = clients.get("gumroad")
+        if isinstance(gum, GumroadClient) and public:
+            st = await self.ctx.db.get_state("gumroad_webhook")
+            key = secret(s.gumroad_webhook_secret) or st.get("key") or secrets.token_urlsafe(24)
+            if not st.get("subscribed"):
+                try:
+                    await gum.subscribe_sales(key)
+                    await self.ctx.db.set_state("gumroad_webhook", {"key": key, "subscribed": True})
+                    report["gumroad_ping"] = "subscribed to sale pings"
+                except Exception as exc:
+                    report["gumroad_ping"] = f"error: {str(exc)[:160]}"
+            else:
+                report["gumroad_ping"] = "already subscribed"
+        await self.ctx.db.set_state("autoconfig_sales", report)
+        if report:
+            await self.log("setup", "Self-configuration: " + "; ".join(f"{k}: {v}" for k, v in report.items()))
+        return report
 
     async def pause(self, pid: int) -> None:
         """Stop selling a product: deactivate its Stripe payment link and mark it paused (reversible: approve again)."""

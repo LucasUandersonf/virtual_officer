@@ -35,10 +35,12 @@ router = APIRouter()
 async def stripe_webhook(request: Request) -> dict[str, bool]:
     s = request.app.state.settings
     body = await request.body()
-    if not s.stripe_webhook_secret:
-        raise HTTPException(503, "STRIPE_WEBHOOK_SECRET not set")
+    # env secret, else the one Leo received when he created the endpoint himself
+    key = secret(s.stripe_webhook_secret) or (await request.app.state.db.get_state("stripe_webhook")).get("secret", "")
+    if not key:
+        raise HTTPException(503, "Stripe webhook not configured yet")
     try:
-        verify_stripe_signature(body, request.headers.get("stripe-signature", ""), secret(s.stripe_webhook_secret))
+        verify_stripe_signature(body, request.headers.get("stripe-signature", ""), key)
     except WebhookError as exc:
         raise HTTPException(400, str(exc)) from exc
     event = json.loads(body)
@@ -52,7 +54,8 @@ async def stripe_webhook(request: Request) -> dict[str, bool]:
 
 @router.post("/webhooks/gumroad")
 async def gumroad_webhook(request: Request, key: str = "") -> dict[str, bool]:
-    expected = secret(request.app.state.settings.gumroad_webhook_secret)
+    expected = secret(request.app.state.settings.gumroad_webhook_secret) or (
+        await request.app.state.db.get_state("gumroad_webhook")).get("key", "")
     if not expected or not hmac.compare_digest(expected, key):
         raise HTTPException(401, "bad key")
     form = {k: str(v) for k, v in (await request.form()).items()}

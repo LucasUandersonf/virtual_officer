@@ -214,6 +214,9 @@ class Office:
         austerity = (await self.ctx.db.get_state("infra")).get("austerity", False)
         today = date.today().isoformat()
         leo = await self.ctx.db.get_state("leo")
+        if (await self.ctx.db.get_state("setup")).get("day") != today:
+            done["setup"] = {"sales": await self.sales.self_configure(), "cfo": bool(await self.cfo.self_configure())}
+            await self.ctx.db.set_state("setup", {"day": today})
         if leo.get("funnel_day") != today:
             done["funnel"] = len(await self.sales.funnel_review(self.growth))
             await self.ctx.db.set_state("leo", {"funnel_day": today})

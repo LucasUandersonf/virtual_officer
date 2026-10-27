@@ -140,6 +140,60 @@ class StripeClient:
     async def deactivate(self, link_id: str) -> None:
         await self._post(f"payment_links/{link_id}", {"active": "false"})
 
+    # ------------------------------------------------------------------ self-configuration (Leo / Nina)
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        r = await self.client.get(f"{self.API}/{path}", params=params or {}, auth=(secret(self.s.stripe_secret_key), ""))
+        if r.status_code >= 400:
+            raise RuntimeError(f"stripe {path}: HTTP {r.status_code} {r.text[:300]}")
+        return dict(r.json())
+
+    async def account(self) -> dict[str, Any]:
+        """Country and default (payout) currency of the connected Stripe account."""
+        a = await self._get("account")
+        return {"country": a.get("country", ""), "default_currency": (a.get("default_currency") or "usd").lower()}
+
+    async def balance(self) -> list[dict[str, Any]]:
+        """Available + pending balance per currency (minor units)."""
+        b = await self._get("balance")
+        out: dict[str, int] = {}
+        for part in ("available", "pending"):
+            for row in b.get(part, []):
+                out[row["currency"]] = out.get(row["currency"], 0) + int(row.get("amount", 0))
+        return [{"currency": c, "amount": a} for c, a in out.items()]
+
+    async def ensure_webhook(self, url: str, events: list[str], known_secret: str) -> dict[str, Any]:
+        """Create (or fix) the endpoint that receives payment events. Stripe returns the signing secret only on create,
+        so an endpoint whose secret we don't know is replaced by a new one."""
+        endpoints = (await self._get("webhook_endpoints", {"limit": 100})).get("data", [])
+        mine = [e for e in endpoints if e.get("url") == url]
+        if mine and known_secret:
+            ep = mine[0]
+            if set(events) - set(ep.get("enabled_events", [])) or ep.get("status") != "enabled":
+                await self._post(f"webhook_endpoints/{ep['id']}", {**{f"enabled_events[{i}]": e for i, e in enumerate(events)},
+                                                                    "disabled": "false"})
+                return {"id": ep["id"], "secret": None, "action": "updated events"}
+            return {"id": ep["id"], "secret": None, "action": "already correct"}
+        for ep in mine:  # unknown secret: replace
+            r = await self.client.delete(f"{self.API}/webhook_endpoints/{ep['id']}", auth=(secret(self.s.stripe_secret_key), ""))
+            if r.status_code >= 400:
+                raise RuntimeError(f"stripe delete webhook: HTTP {r.status_code}")
+        ep = await self._post("webhook_endpoints", {"url": url, "description": "Product Studio (managed by Leo)",
+                                                    **{f"enabled_events[{i}]": e for i, e in enumerate(events)}})
+        return {"id": ep["id"], "secret": ep.get("secret"), "action": "created"}
+
+    async def enable_wallets(self) -> dict[str, Any]:
+        """Turn on Apple Pay and Google Pay in the default payment method configuration."""
+        confs = (await self._get("payment_method_configurations", {"limit": 20})).get("data", [])
+        conf = next((c for c in confs if c.get("is_default")), confs[0] if confs else None)
+        if not conf:
+            return {"action": "no payment method configuration found"}
+        state = {w: ((conf.get(w) or {}).get("display_preference") or {}).get("value") for w in ("apple_pay", "google_pay")}
+        if all(v == "on" for v in state.values()):
+            return {"action": "already on", **state}
+        await self._post(f"payment_method_configurations/{conf['id']}", {
+            "apple_pay[display_preference][preference]": "on", "google_pay[display_preference][preference]": "on"})
+        return {"action": "turned on", "configuration": conf["id"]}
+
 
 def verify_stripe_signature(payload: bytes, header: str, secret_key: str, tolerance: int = 300) -> None:
     parts: dict[str, list[str]] = {}
@@ -206,8 +260,8 @@ class GumroadClient:
         return ListingResult("gumroad", "", "https://gumroad.com/products/new", "manual",
                              f"API create unavailable (HTTP {r.status_code}); upload manually with the prepared listing")
 
-    async def subscribe_sales(self) -> None:
-        url = f"{self.s.public_base_url}/webhooks/gumroad?key={secret(self.s.gumroad_webhook_secret)}"
+    async def subscribe_sales(self, key: str = "") -> None:
+        url = f"{self.s.public_base_url}/webhooks/gumroad?key={key or secret(self.s.gumroad_webhook_secret)}"
         await self.client.put(f"{self.API}/resource_subscriptions",
                               data={**self._token, "resource_name": "sale", "post_url": url})
 
