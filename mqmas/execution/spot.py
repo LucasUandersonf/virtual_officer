@@ -167,6 +167,21 @@ class SpotExecutor:
         except ccxt.OrderNotFound:
             pass
 
+    async def sell_part(self, symbol: str, qty: float) -> Fill:
+        """Market sell of part of a position (the caller has already cancelled its resting stop)."""
+        amount = self.amount(symbol, qty)
+        if amount <= 0:
+            raise OrderRefused(f"{symbol}: quantidade abaixo do lote mínimo")
+        cid = client_id("p")
+        try:
+            order = await self._ex.create_order(symbol, "market", "sell", amount, None, {"newClientOrderId": cid})
+        except Exception:
+            found = await self.find(symbol, cid)
+            if found is None:
+                raise
+            order = found
+        return self._fill(symbol, await self.order(symbol, str(order["id"])), "sell")
+
     async def sell_all(self, symbol: str, qty: float, stop_order_id: str | None, urgent: bool) -> Fill:
         """Cancel the resting stop, then sell: IOC at the bid first (unless urgent), rest at market."""
         legs: list[dict[str, Any]] = []

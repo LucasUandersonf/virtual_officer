@@ -10,6 +10,7 @@ volatility only.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -24,8 +25,35 @@ EXCLUDED_BASES = {
     "RLUSD", "XUSD", "BFUSD", "PAXG", "XAUT", "WBTC", "WBETH", "BETH", "STETH", "BNSOL", "UST", "USTC",
     # tokenized equities / ETFs that showed up in the volume ranking: not crypto, different market hours
     "SPCXB", "SNDKB", "SOXLB", "CRCLB", "MUB", "TSLAB", "NVDAB", "AAPLB", "MSTRB", "COINB", "SPYB", "QQQB",
+    "GOOGLB", "INTCB", "SKHYB", "AMZNB", "METAB", "MSFTB", "AMDB", "HOODB", "PLTRB",
+    "RWUSD",
 }
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
+
+
+PUBLIC_DATA_URL = "https://data-api.binance.vision/api/v3"
+
+
+def research_exchange() -> object:
+    """Binance spot client for market data only.
+
+    With ``MQMAS_PUBLIC_DATA=1`` it reads Binance's public market-data mirror instead of api.binance.com,
+    which refuses some regions (GitHub's runners, for one). Candles and tickers are identical.
+    """
+    import ccxt
+
+    ex = ccxt.binance({"enableRateLimit": True,
+                       "options": {"defaultType": "spot", "fetchMarkets": {"types": ["spot"]}}})
+    if os.environ.get("MQMAS_PUBLIC_DATA") == "1":
+        ex.urls["api"]["public"] = PUBLIC_DATA_URL
+    return ex
+
+
+def is_crypto(base: str) -> bool:
+    """False for stablecoins, wrappers, tokenized equities and leveraged tokens."""
+    if base in EXCLUDED_BASES or base.endswith(LEVERAGED_SUFFIXES) or len(base) < 2:
+        return False
+    return not (base.endswith("USD") or base.startswith("USD"))  # dollar stablecoins not yet in the list
 
 
 def candidate_pool(ex: object, size: int) -> list[str]:
@@ -37,7 +65,7 @@ def candidate_pool(ex: object, size: int) -> list[str]:
         if not (m.get("spot") and m.get("active") and m.get("quote") == "USDT"):
             continue
         base = str(m.get("base", ""))
-        if base in EXCLUDED_BASES or base.endswith(LEVERAGED_SUFFIXES) or len(base) < 2:
+        if not is_crypto(base):
             continue
         qv = float((tickers.get(sym) or {}).get("quoteVolume") or 0.0)
         rows.append((qv, sym))

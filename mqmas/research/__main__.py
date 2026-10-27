@@ -1,5 +1,5 @@
 """``python -m mqmas.research [root] <mode>``, mode in lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|
-livro|cross|arena|talib|aggr|all.
+livro|cross|arena|talib|aggr|trend|waves|all.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -169,6 +169,26 @@ def main() -> None:
             for line in talib_study.summarize(rep):
                 log.info(line)
             log.info("talib report saved to %s", path)
+    if which in ("trend", "all"):
+        from mqmas.research import trend_study
+
+        path = root / "trend_report.json"
+        if which == "trend" or not _current(path, trend_study.VERSION):
+            rep = trend_study.TrendStudy(root).run()
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in trend_study.summarize(rep):
+                log.info(line)
+            log.info("trend report saved to %s", path)
+    if which in ("waves", "all"):
+        from mqmas.research import waves
+
+        path = root / "waves_report.json"
+        if which == "waves" or not _current(path, waves.VERSION):
+            rep = waves.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in waves.summarize(rep):
+                log.info(line)
+            log.info("waves report saved to %s", path)
     if which in ("aggr", "all"):
         from mqmas.research import aggressive
 
