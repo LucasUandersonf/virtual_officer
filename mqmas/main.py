@@ -384,6 +384,15 @@ async def research_arena() -> dict[str, Any]:
     return {"ready": True, "report": json.loads(path.read_text())}
 
 
+@app.get("/api/research/talib")
+async def research_talib() -> dict[str, Any]:
+    """TA-Lib's 61 candle patterns on 1d/2d/3d, chosen blind, plus our indicators audited against TA-Lib."""
+    path = _research_root(_rt().settings) / "talib_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.get("/api/research/crosscheck")
 async def research_crosscheck() -> dict[str, Any]:
     """Our engine vs backtesting.py on the same Binance candles and rules."""

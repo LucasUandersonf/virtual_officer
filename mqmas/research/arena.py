@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -242,7 +243,10 @@ def account(tr: pd.DataFrame, rules: RiskRules, costs: Costs, start: pd.Timestam
             "max_dd": round(m["max_drawdown"], 4)}
 
 
-def run_tf(lab: Lab, tf: str, costs: Costs, regime: pd.Series) -> dict[str, pd.DataFrame]:
+def run_tf(lab: Lab, tf: str, costs: Costs, regime: pd.Series, frame_fn: Callable[..., Any] | None = None,
+           cands: list[dict[str, Any]] | None = None) -> dict[str, pd.DataFrame]:
+    """Trade tables per candidate. Default: stage 1 + stage 2 on ``signal_frame``; or a given frame and list."""
+    frame_fn = frame_fn or signal_frame
     base, rule = TFS[tf]
     frames = []
     for coin, raw in lab.data[base].items():
@@ -252,7 +256,7 @@ def run_tf(lab: Lab, tf: str, costs: Costs, regime: pd.Series) -> dict[str, pd.D
             df = resample(df, rule)
         if len(df) < WARMUP[tf] + 50:
             continue
-        sig, st, exits = signal_frame(df)
+        sig, st, exits = frame_fn(df)
         months = df.index.tz_localize(None).to_period("M")
         elig = np.array([coin in lab.eligible.get(mm, ()) for mm in months], dtype=bool)
         elig[: WARMUP[tf]] = False
@@ -283,6 +287,8 @@ def run_tf(lab: Lab, tf: str, costs: Costs, regime: pd.Series) -> dict[str, pd.D
         empty = pd.DataFrame(columns=["coin", "t_in", "t_out", "ret", "stop_pct", "reason"])
         return {k: (pd.concat(v, ignore_index=True) if v else empty) for k, v in rows.items()}
 
+    if cands is not None:
+        return table(cands)
     c1 = stage1(tf)
     t1 = table(c1)
     ranked: dict[str, float] = {}

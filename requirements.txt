@@ -12,3 +12,4 @@ scikit-learn==1.9.1
 uvicorn[standard]==0.54.0
 backtesting==0.6.6  # independent backtester used by mqmas.research.crosscheck (AGPL-3.0)
 numba==0.68.0  # speeds up mqmas.research.arena (pure-Python fallback if missing)
+TA-Lib==0.6.8  # 61 candlestick patterns + reference indicators (wheel bundles the C library)

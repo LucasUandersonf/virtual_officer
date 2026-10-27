@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|arena|all]``.
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|arena|talib|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -158,6 +158,16 @@ def main() -> None:
             for line in arena.summarize(rep):
                 log.info(line)
             log.info("arena report saved to %s", path)
+    if which in ("talib", "all"):
+        from mqmas.research import talib_study
+
+        path = root / "talib_report.json"
+        if which == "talib" or not _current(path, talib_study.VERSION):
+            rep = talib_study.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in talib_study.summarize(rep):
+                log.info(line)
+            log.info("talib report saved to %s", path)
 
 
 if __name__ == "__main__":
