@@ -85,3 +85,15 @@ def test_catalog_has_every_book_rule_and_candidates_are_unique():
     assert len(ids) == 16 and len(livro.LONGS) == 11 and len(livro.EXITS) == 5
     keys = [c["key"] for c in livro.candidates()]
     assert len(keys) == len(set(keys)) == 600  # 2 timeframes × ±macro × ±exit patterns × (18 + 55 pairs + 2 k-of-n)
+
+
+def test_three_day_candles_aggregate_daily_ones_without_peeking():
+    idx = pd.date_range("2024-01-01", periods=10, freq="1D", tz="UTC")
+    d = pd.DataFrame({"open": np.arange(10.0), "high": np.arange(10.0) + 1, "low": np.arange(10.0) - 1,
+                      "close": np.arange(10.0) + 0.5, "volume": 1.0}, index=idx)
+    b = livro.resample_3d(d, idx[-1])
+    assert (b.index[1:] - b.index[:-1] == pd.Timedelta(days=3)).all()
+    full = d.loc[b.index[1]:b.index[1] + pd.Timedelta(days=2)]  # the first bucket may be partial (epoch anchor)
+    assert b["open"].iloc[1] == full["open"].iloc[0] and b["close"].iloc[1] == full["close"].iloc[-1]
+    assert b["high"].iloc[1] == full["high"].max() and b["volume"].iloc[1] == 3.0
+    assert (b.index + pd.Timedelta(days=3) <= idx[-1] + pd.Timedelta(days=1)).all()  # no incomplete last bar

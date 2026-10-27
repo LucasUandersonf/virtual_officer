@@ -4,12 +4,12 @@ Cada estratégia é uma regra isolada e executável. O código está em `mqmas/r
 
 ## Regras comuns a todas as estratégias
 
-- **Execução:** sinal no fechamento da vela, ordem na abertura da vela seguinte. Timeframes 1d e 4h. Custos de 0,10% de taxa + 0,05% de slippage por lado.
+- **Execução:** sinal no fechamento da vela, ordem na abertura da vela seguinte. Timeframes 1d e 3d (velas de 3 dias). Custos de 0,10% de taxa + 0,05% de slippage por lado.
 - **Stop inicial:** o mais distante entre o stop técnico da estratégia e 1,5 × ATR(14), nunca além de 3 × ATR(14).
 - **Breakeven:** quando a máxima chega à entrada + 1R, o stop vai para a entrada + custos.
 - **Trailing:** a partir de +2R, o stop = max(stop atual, mínima das últimas 3 velas, máxima do trade − 2,5 × ATR). Ele só sobe.
 - **Alvo:** a altura do padrão somada ao rompimento (padrões gráficos) ou sem alvo, deixando o trailing conduzir. As duas versões são testadas.
-- **Saídas extras:** qualquer padrão de baixa do catálogo, o sinal de venda do próprio modelo (TCC) e o tempo (40 velas no 1d, 90 no 4h).
+- **Saídas extras:** qualquer padrão de baixa do catálogo, o sinal de venda do próprio modelo (TCC) e o tempo (40 velas no 1d, 20 no 3d).
 - **Venda a descoberto:** a Binance spot não permite. Por isso os padrões de baixa são **regras de saída** e não abrem vendas.
 
 ## Estratégias
@@ -106,7 +106,7 @@ Cada estratégia é uma regra isolada e executável. O código está em `mqmas/r
 
 ## Confluência (etapa 2)
 
-As combinações testadas, cada uma com e sem o filtro macro, no 1d e no 4h:
+As combinações testadas, cada uma com e sem o filtro macro, no 1d e no 3d:
 - **pares:** A dispara e B também disparou nas últimas 3 velas (55 pares);
 - **k-de-n:** pelo menos 2 ou 3 estratégias diferentes nas últimas 3 velas;
 - **individuais:** com e sem alvo.

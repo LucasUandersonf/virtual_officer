@@ -41,9 +41,19 @@ from mqmas.ta.structure import pivots, structure_events
 
 log = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 3
 CONFIRM = 3  # candles within which a confluence partner must also have fired
-HOLD = {"1d": 40, "4h": 90}  # time stop: 40 days / 15 days
+TFS = ("1d", "3d")  # 4h lost after costs in v1/v2; 3-day candles = slower swing
+HOLD = {"1d": 40, "3d": 20}  # time stop: 40 days / 60 days
+WARMUP = {"1d": 250, "3d": 60}
+
+
+def resample_3d(daily: pd.DataFrame, end: pd.Timestamp) -> pd.DataFrame:
+    """3-day candles from daily ones (only complete bars; each bar is stamped with its first day)."""
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    naive = daily[list(agg)].tz_localize(None)  # fixed epoch-anchored buckets need a tz-naive index
+    out = naive.resample("3D", origin="epoch", label="left", closed="left").agg(agg).dropna().tz_localize("UTC")
+    return out[out.index + pd.Timedelta(days=3) <= end + pd.Timedelta(days=1)]
 WINDOW = 60  # look-back of the rounding patterns
 
 # ---------------------------------------------------------------------- the catalogue (one entry per rule)
@@ -253,7 +263,7 @@ def managed_trades(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, 
 
 def candidates() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for tf in ("1d", "4h"):
+    for tf in TFS:
         for macro in (False, True):
             for s in LONGS:
                 for tgt in (True, False) if not s.startswith("tcc_") else (False,):
@@ -289,23 +299,29 @@ def build_tables(lab: Lab, costs: Costs) -> dict[str, pd.DataFrame]:
     cands = candidates()
     rows: dict[str, list[pd.DataFrame]] = {c["key"]: [] for c in cands}
     regime = btc_regime(lab.btc_daily)
-    for tf in ("1d", "4h"):
-        for coin, raw in lab.data[tf].items():
+    for tf in TFS:
+        for coin, daily in lab.data["1d"].items():
+            raw = daily if tf == "1d" else resample_3d(daily, lab.end)
             df = raw[raw.index >= pd.Timestamp("2021-10-01", tz="UTC")][["open", "high", "low", "close", "volume"]]
-            if len(df) < 300:
+            if len(df) < WARMUP[tf] + 50:
                 continue
             ev, stops, targets = detect(df)
             f = features(df)
             months = df.index.tz_localize(None).to_period("M")
             elig = np.array([coin in lab.eligible.get(m, ()) for m in months], dtype=bool)
-            gate = classic_macro(f, align_daily(regime, df.index))
+            if tf == "1d":
+                gate = classic_macro(f, align_daily(regime, df.index))
+            else:  # the daily gate as it stood on the last day of each 3-day candle
+                d = daily[["open", "high", "low", "close", "volume"]]
+                g = pd.Series(classic_macro(features(d), align_daily(regime, d.index)), index=d.index)
+                gate = g.reindex(df.index + pd.Timedelta(days=2), method="ffill").fillna(False).to_numpy(dtype=bool)
             o, h, lo, c = (df[x].to_numpy() for x in ("open", "high", "low", "close"))
             a = f["atr"].to_numpy()
             exits_any = ev[EXITS].any(axis=1).to_numpy()
             recent = ev[list(LONGS)].astype(float).rolling(CONFIRM, min_periods=1).max().to_numpy()
             for cand in (x for x in cands if x["tf"] == tf):
                 ent = _entries(ev, cand) & elig
-                ent[:250] = False
+                ent[:WARMUP[tf]] = False
                 if cand["macro"]:
                     ent &= gate
                 if not ent.any():
@@ -421,7 +437,8 @@ def summarize(rep: dict[str, Any]) -> list[str]:
             t, p1, p2 = r["total"], r["periodo1"], r["periodo2"]
             if not t.get("trades"):
                 continue
-            lines.append(f"LIVRO individual {r['tf']} {r['membros'][0]} macro={r['macro']} alvo={r['alvo']} | "
+            lines.append(f"LIVRO individual {r['tf']} {r['membros'][0]} macro={r['macro']} alvo={r['alvo']} "
+                         f"saida_padrao={r['key'].endswith('True')} | "
                          f"n={t['trades']} acerto {t['acerto']:.0%} payoff {t['payoff']} PF {t['pf']} "
                          f"exp {t['expectativa_R']}R | p1 PF {p1.get('pf')} p2 PF {p2.get('pf')} | saídas {t['saidas']}")
     for key in rep["top_periodo1"]:
