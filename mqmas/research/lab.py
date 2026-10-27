@@ -48,7 +48,7 @@ from mqmas.research.strategies import (
 
 log = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 3
 HISTORY_START = pd.Timestamp("2022-01-01", tz="UTC")
 FIRST_TEST = pd.Timestamp("2023-07-01", tz="UTC")
 WINDOW_MONTHS = 6
@@ -126,7 +126,7 @@ def regime_breakdown(monthly: pd.Series, btc_daily: pd.DataFrame) -> dict[str, d
 
 
 class Lab:
-    def __init__(self, root: Path, pool_size: int = 30, top_n: int = 15,
+    def __init__(self, root: Path, pool_size: int = 40, top_n: int = 15,
                  min_range: float = 0.025, max_range: float = 0.15) -> None:
         self.root = root
         self.pool_size, self.top_n, self.min_range, self.max_range = pool_size, top_n, min_range, max_range
@@ -156,6 +156,17 @@ class Lab:
         self.btc_daily = self.data["1d"]["BTC/USDT"]
         self.end = max(d.index[-1] for d in self.data["1h"].values()).normalize()
         self.eligible = monthly_eligibility(self.data["1d"], self.top_n, self.min_range, self.max_range)
+        self.rs = self.relative_strength()
+
+    def relative_strength(self, lookback: int = 30) -> pd.DataFrame:
+        """Percentile rank (0–1) of each coin's trailing return inside that month's universe, known at the
+        open of the day (shifted one day)."""
+        closes = pd.DataFrame({c: d["close"] for c, d in self.data["1d"].items()}).sort_index()
+        mom = closes / closes.shift(lookback) - 1
+        months = closes.index.tz_localize(None).to_period("M")
+        mask = pd.DataFrame({c: [c in self.eligible.get(m, ()) for m in months] for c in closes.columns},
+                            index=closes.index)
+        return mom.where(mask).rank(axis=1, pct=True).shift(1)
 
     # ------------------------------------------------------------------ bracket strategies
 
@@ -170,6 +181,8 @@ class Lab:
             for coin, df in self.data[tf].items():
                 f = features(df[df.index >= HISTORY_START - pd.Timedelta(days=40)])
                 reg = align_daily(regime, f.index)
+                rs = self.rs[coin] if coin in self.rs.columns else pd.Series(dtype=float)
+                f["rs"] = rs.reindex(f.index.normalize()).to_numpy()
                 months = f.index.tz_localize(None).to_period("M")
                 elig = np.array([coin in self.eligible.get(m, ()) for m in months], dtype=bool)
                 o, h, lo, cl = (f[k].to_numpy() for k in ("open", "high", "low", "close"))
@@ -236,6 +249,13 @@ class Lab:
         if not isinstance(oos_daily_or_trades, pd.Series) and len(oos_daily_or_trades):
             stop = float(oos_daily_or_trades["stop_pct"].median()) + self.costs.round_trip
             m["min_capital_usd"] = 5.0 * stop / RiskRules().risk_per_trade
+            m["median_stop_pct"] = float(oos_daily_or_trades["stop_pct"].median())
+            for risk in (0.01, 0.015):  # sensitivity: same signals, bigger risk per trade
+                alt = simulate_portfolio(oos_daily_or_trades, RiskRules(equity0=self.rules.equity0,
+                                                                        risk_per_trade=risk),
+                                         self.costs, FIRST_TEST, self.end).metrics
+                m[f"monthly_mean_risk{risk}"] = alt["monthly_mean"]
+                m[f"max_drawdown_risk{risk}"] = alt["max_drawdown"]
         else:
             m["min_capital_usd"] = 5.0 * 3  # rotation: top-k slots of at least $5
         m["dsr"] = dsr
@@ -337,6 +357,10 @@ def summarize(report: dict[str, Any]) -> list[str]:
             f"MC DD95 {c['monte_carlo'].get('dd_p95', 0):.1%} "
             f"ano p5 {c['monte_carlo'].get('year_p5', 0):+.1%} | falhas: {'; '.join(c['fails']) or '-'}")
         lines.append(f"    config ao vivo: {c['live_config']}")
+        if "monthly_mean_risk0.01" in m:
+            lines.append(f"    stop mediano {m['median_stop_pct']:.2%} | risco 1%: mês {m['monthly_mean_risk0.01']:+.2%} "
+                         f"DD {m['max_drawdown_risk0.01']:.1%} | risco 1,5%: mês {m['monthly_mean_risk0.015']:+.2%} "
+                         f"DD {m['max_drawdown_risk0.015']:.1%}")
         lines.append("    regimes: " + " | ".join(f"{k}: {v['months']}m média {v['mean']:+.2%} pos {v['positive']:.0%}"
                                                   for k, v in c["regimes"].items()))
     return lines

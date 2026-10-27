@@ -40,7 +40,7 @@ def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 def features(df: pd.DataFrame) -> pd.DataFrame:
     f = df.copy()
     c = f["close"]
-    f["ema50"], f["ema200"] = ema(c, 50), ema(c, 200)
+    f["ema20"], f["ema50"], f["ema200"] = ema(c, 20), ema(c, 50), ema(c, 200)
     f["rsi3"], f["rsi14"] = rsi(c, 3), rsi(c, 14)
     f["atr"] = atr(df)
     f["vol20"] = f["volume"].shift(1).rolling(20).mean()
@@ -87,6 +87,25 @@ def _squeeze(f: pd.DataFrame, p: dict[str, Any], regime: np.ndarray) -> np.ndarr
     return out
 
 
+def _confluence(f: pd.DataFrame, p: dict[str, Any], regime: np.ndarray) -> np.ndarray:
+    """Layered confluence: everything mandatory must hold, plus a trigger, plus enough extras.
+
+    mandatory  BTC regime (prev-day close > SMA100) · close > EMA200 · EMA50 > EMA200
+    trigger    breakout of the 20-bar high | bounce off the EMA20 | either
+    extras     relative strength vs the universe ≥ rs_min · volume > 1.3× average ·
+               RSI(14) in the 50–70 momentum band (strong but not exhausted)
+    """
+    c = f["close"]
+    mandatory = (c > f["ema200"]) & (f["ema50"] > f["ema200"])
+    breakout = c > f["hh20"]
+    bounce = (f["low"] <= f["ema20"]) & (c > f["ema20"]) & (c > f["open"])
+    trigger = {"breakout": breakout, "pullback": bounce, "either": breakout | bounce}[p["trigger"]]
+    extras = ((f["rs"] >= p["rs_min"]).astype(int) + (f["volume"] > 1.3 * f["vol20"]).astype(int)
+              + f["rsi14"].between(50, 70).astype(int))
+    out: np.ndarray = (mandatory & trigger & (extras >= p["min_extra"])).to_numpy(dtype=bool) & regime
+    return out
+
+
 @dataclass(frozen=True)
 class Config:
     family: str
@@ -108,6 +127,7 @@ class Config:
 
 FAMILIES: dict[str, SignalFn] = {
     "breakout": _breakout, "pullback": _pullback, "meanrev": _meanrev, "squeeze": _squeeze,
+    "confluence": _confluence,
 }
 HOLD = {"1h": 120, "4h": 60, "1d": 40}  # 5, 10 and 40 days
 
@@ -129,6 +149,12 @@ def build_configs(timeframes: tuple[str, ...] = ("1h", "4h", "1d")) -> list[Conf
         out += _grid("meanrev", tf, {"k": [2.0, 2.5], "regime": [False, True]},
                      [Exit(s, t, None, h // 2) for s in (1.5, 2.5) for t in (1.5, 2.5)])
         out += _grid("squeeze", tf, {"q": [0.1, 0.2]}, trend_exits + [Exit(2.0, 3.0, None, h // 2)])
+    for tf in ("4h", "1d"):
+        h = HOLD[tf]
+        conf_exits = [Exit(2.0, None, 3.0, h), Exit(3.0, None, 4.5, h), Exit(2.0, 3.0, None, h // 2),
+                      Exit(2.5, 4.5, None, h // 2), Exit(2.0, 6.0, 3.0, h)]
+        out += _grid("confluence", tf, {"trigger": ["breakout", "pullback", "either"], "min_extra": [2, 3],
+                                        "rs_min": [0.6, 0.8]}, conf_exits)
     return out
 
 

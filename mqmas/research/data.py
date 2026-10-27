@@ -22,6 +22,8 @@ TF_MS = {"1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 EXCLUDED_BASES = {
     "USDC", "FDUSD", "TUSD", "USDP", "DAI", "BUSD", "EUR", "AEUR", "EURI", "USDE", "PYUSD", "USD1",
     "RLUSD", "XUSD", "BFUSD", "PAXG", "XAUT", "WBTC", "WBETH", "BETH", "STETH", "BNSOL", "UST", "USTC",
+    # tokenized equities / ETFs that showed up in the volume ranking: not crypto, different market hours
+    "SPCXB", "SNDKB", "SOXLB", "CRCLB", "MUB", "TSLAB", "NVDAB", "AAPLB", "MSTRB", "COINB", "SPYB", "QQQB",
 }
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 
