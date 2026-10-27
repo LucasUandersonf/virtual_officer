@@ -6,6 +6,8 @@ Mesa quantitativa autônoma para **BTC/USDT Spot**, com banca inicial de **US$ 5
 
 ![office](docs/office.png)
 
+> **Novo neste repositório:** [`studio/`](studio/README.md) é um segundo escritório virtual, o **Product Studio**: cinco agentes que pesquisam, constroem, divulgam e vendem produtos de automação no mercado global, com P&L em USD que inclui o custo da Railway.
+
 ---
 
 ## 1. Princípio de arquitetura: LLMs só podem **vetar**

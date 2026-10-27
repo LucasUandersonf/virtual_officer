@@ -1,0 +1,34 @@
+# Local stack: office (FastAPI + agents) + PostgreSQL + Redis + n8n.
+#   cp .env.example .env && docker compose up --build   ->  office http://localhost:8000 · n8n http://localhost:5678
+# Redis and n8n are optional: the office runs with just Postgres (or even SQLite without compose).
+services:
+  studio:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://studio:studio@postgres:5432/studio
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_BASE_URL: http://localhost:8000
+    ports: ["8000:8000"]
+    volumes: [artifacts:/data]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: studio, POSTGRES_PASSWORD: studio, POSTGRES_DB: studio }
+    volumes: [pg:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U studio"], interval: 5s, retries: 10 }
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+  n8n:
+    image: n8nio/n8n:1.97.1
+    ports: ["5678:5678"]
+    environment:
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"  # workflows read $env.* variables
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: UTC
+      WEBHOOK_URL: http://localhost:5678/
+    volumes: [n8n:/home/node/.n8n]
+volumes: { pg: {}, artifacts: {}, n8n: {} }

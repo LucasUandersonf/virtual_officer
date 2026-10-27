@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Product Studio Office</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/office.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><path d="M17 2 31 10v14L17 32 3 24V10z" fill="#19B394"></path><path d="M17 2 31 10 17 18 3 10z" fill="#5EE0BE"></path><path d="M17 18v14L3 24V10z" fill="#118A70"></path></svg>
+      <div class="brand-text"><strong>Product Studio</strong><span>Escritório virtual autônomo · mercado global (USD)</span></div>
+    </div>
+    <nav aria-label="Seções" class="tabs">
+      <a href="#" class="tab active">Escritório</a>
+      <a href="#setores" class="tab">Setores</a>
+      <a href="#pipeline" class="tab">Pipeline</a>
+      <a href="#products" class="tab">Produtos</a>
+      <a href="#ideias" class="tab">Ideias</a>
+      <a href="#reunioes" class="tab">Reuniões</a>
+    </nav>
+    <div class="top-right">
+      <div class="ticker"><span class="muted-sm">Receita mês</span><span class="mono strong" id="h-rev">—</span></div>
+      <div class="ticker"><span class="muted-sm">Lucro mês</span><span class="mono strong" id="h-profit">—</span></div>
+      <div class="ticker"><span class="muted-sm">Railway/mês</span><span class="mono strong" id="h-rail">—</span></div>
+      <span class="pill pill-mode" id="pill-auto">—</span>
+      <span class="pill pill-conn off" id="pill-conn"><span class="pdot"></span><span id="conn-text">Conectando…</span></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section aria-label="Escritório virtual" class="scene-card">
+      <div class="scene-head">
+        <div class="scene-title"><h1>Studio Floor</h1><span class="muted-sm" id="scene-sub">5 agentes</span></div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="meet-card" id="meet-card">
+        <div class="row-between"><strong id="mc-title">Sem reunião agora</strong><span class="live-dot" id="mc-dot"></span></div>
+        <div class="sub" id="mc-sub">Os agentes se reúnem na Board Room para votar cada ideia e revisar as metas semanais.</div>
+        <div class="mc-rows" id="mc-rows"></div>
+      </div>
+      <div class="scroller" id="scroller">
+        <div class="stage" id="stage">
+          <div class="world" id="world"></div>
+          <div class="world" id="overlay" style="z-index:100000;pointer-events:none"></div>
+        </div>
+      </div>
+      <div class="dock">
+        <button class="dock-btn" id="z-out" aria-label="Diminuir zoom">−</button>
+        <span class="zoom-label mono" id="z-label">100%</span>
+        <button class="dock-btn" id="z-in" aria-label="Aumentar zoom">+</button>
+        <span class="dock-sep"></span>
+        <button class="dock-primary" id="btn-tick">Rodar ciclo agora</button>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <div class="card-head"><h2>Resultado (USD)</h2><span class="muted-xs" id="upd">—</span></div>
+        <div class="kpis">
+          <div class="kpi"><span class="lbl">Receita líquida total</span><span class="val" id="k-net">—</span><span class="hint" id="k-gross">—</span></div>
+          <div class="kpi"><span class="lbl">Lucro total</span><span class="val" id="k-profit">—</span><span class="hint">receita − taxas − custos</span></div>
+          <div class="kpi"><span class="lbl">Vendas hoje</span><span class="val" id="k-today">—</span><span class="hint" id="k-today-usd">—</span></div>
+          <div class="kpi"><span class="lbl">Produtos ativos</span><span class="val" id="k-live">—</span><span class="hint" id="k-platforms">—</span></div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Metas</h2><span class="muted-xs" id="g-be">—</span></div>
+        <div id="goals"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Receita × custos por dia</h2><span class="muted-xs">30 dias</span></div>
+        <div class="legend-row"><span><i style="background:var(--series-rev)"></i>Receita</span><span><i style="background:var(--series-cost)"></i>Custos + taxas</span></div>
+        <div class="chart" id="chart"><svg id="chart-svg" role="img" aria-label="Receita e custos por dia"></svg><div class="tip" id="tip" hidden></div></div>
+        <details class="more"><summary>Ver tabela</summary><div class="tbl-wrap"><table class="tbl" id="chart-table"></table></div></details>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Custos fixos do escritório</h2><span class="muted-xs">por mês</span></div>
+        <div class="costs" id="costs"></div>
+      </section>
+      <section class="card" id="ata-card">
+        <div class="card-head"><h2>Ata ao vivo</h2><a href="#reunioes" class="link-sm">Histórico</a></div>
+        <ul class="ata" id="ata"><li class="empty">Nenhuma reunião ainda.</li></ul>
+      </section>
+    </aside>
+  </main>
+
+  <div class="wide">
+    <section id="setores"><div class="sectors" id="sectors"></div></section>
+    <section class="card" id="pipeline">
+      <div class="card-head"><h2>Pipeline</h2><span class="muted-xs">ideia → aprovada → construção → pronta → publicada</span></div>
+      <div class="kanban" id="kanban"></div>
+    </section>
+    <section class="card" id="products">
+      <div class="card-head"><h2>Produtos</h2><span class="muted-xs" id="p-note">—</span></div>
+      <div class="products" id="plist"></div>
+    </section>
+    <section class="card" id="ideias">
+      <div class="card-head"><h2>Ideias e evidências</h2><span class="muted-xs">da pesquisa do Head de Produto</span></div>
+      <div class="tbl-wrap"><table class="tbl" id="ideas"></table></div>
+    </section>
+    <section class="card" id="reunioes">
+      <div class="card-head"><h2>Reuniões</h2><span class="muted-xs">votos vêm dos números; a IA escreve as falas</span></div>
+      <div class="meetings" id="meetings"></div>
+    </section>
+  </div>
+</div>
+<script src="/static/office.js"></script>
+</body>
+</html>

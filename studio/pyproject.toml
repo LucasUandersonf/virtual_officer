@@ -1,0 +1,20 @@
+[project]
+name = "product-studio"
+version = "0.1.0"
+description = "Autonomous virtual office: five AI agents research, build, market and sell automation products"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I"]
+ignore = ["B008", "UP017", "UP037"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/agents/playbook.py" = ["E501"]  # data: n8n expressions and JS snippets read better on one line
