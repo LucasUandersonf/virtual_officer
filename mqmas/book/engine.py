@@ -39,6 +39,7 @@ from mqmas.data.market_feed import with_backoff
 from mqmas.execution.spot import Fill, OrderRefused, SpotExecutor, client_id
 from mqmas.llm.router import LLMRouter
 from mqmas.models import AgentMessage, AgentRole, CroOpinion, ExitReason, Position, PositionStatus, Vote
+from mqmas.ops import trim_memory
 from mqmas.persistence.db import Database
 from mqmas.research.data import EXCLUDED_BASES, LEVERAGED_SUFFIXES, TF_MS
 from mqmas.research.engine import Exit
@@ -606,6 +607,7 @@ class StrategyBook:
                 signals = await self.evaluate()
                 await self.try_entries(signals)
                 await self.try_entries(await self.scan_confluence())
+                trim_memory()
             except Exception:
                 log.exception("book cycle failed")
             try:

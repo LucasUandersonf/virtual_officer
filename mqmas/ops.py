@@ -120,6 +120,18 @@ class Notifier:
             await asyncio.sleep(1)  # Telegram: ~1 message/second per chat
 
 
+def trim_memory() -> None:
+    """Give freed heap back to the OS after a heavy job (glibc keeps it otherwise; Railway bills RAM)."""
+    import ctypes
+    import gc
+
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 def backup_database(db_path: Path, keep: int, now: datetime | None = None) -> Path:
     """Consistent online copy of the SQLite file, gzipped; older copies beyond ``keep`` are deleted."""
     now = now or datetime.now(timezone.utc)

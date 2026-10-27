@@ -123,6 +123,9 @@ class SetupLeague:
             self.running = False
 
     async def run(self, stop: asyncio.Event) -> None:
+        if not self._s.league_enabled:
+            log.info("setup league disabled (LEAGUE_ENABLED=false): showing the cached report only")
+            return
         while not stop.is_set():
             if self.needs_refresh():
                 await self.refresh()

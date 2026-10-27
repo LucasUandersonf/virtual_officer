@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|all]`` — run the labs whose report is missing or outdated."""
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|all]`` — run missing or outdated labs."""
 
 from __future__ import annotations
 
@@ -84,6 +84,18 @@ def main() -> None:
             for line in pattern_portfolio.summarize(rep):
                 log.info(line)
             log.info("pattern portfolio saved to %s", path)
+    if which in ("acct", "all"):
+        from mqmas.config import Settings
+        from mqmas.research import account
+
+        path = root / "account_report.json"
+        if which == "acct" or not _current(path, account.VERSION):
+            key = Settings().book_strategies.split(";")[0].strip()
+            rep = account.run(root, key)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in account.summarize(rep):
+                log.info(line)
+            log.info("account report saved to %s", path)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     DB_PATH=/data/mqmas.db \
-    PORT=8000
+    PORT=8000 \
+    MALLOC_ARENA_MAX=2
 RUN useradd --create-home --uid 10001 quant \
  && mkdir -p /data && chown quant:quant /data
 COPY --from=builder /opt/venv /opt/venv

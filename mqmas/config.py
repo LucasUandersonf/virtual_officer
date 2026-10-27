@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     min_trade_sharpe: float = 0.20
 
     # --- Setup League (walk-forward tournament) -------------------------------------
+    league_enabled: bool = False  # BTC 15m league: all 9 setups failed on fees; the cached report still shows
     league_history_days: int = Field(default=730, ge=60, le=2000)
     league_refresh_hours: float = Field(default=24.0, ge=1)
     league_folds: int = Field(default=5, ge=3, le=10)
