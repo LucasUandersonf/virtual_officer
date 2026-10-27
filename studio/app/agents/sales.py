@@ -10,16 +10,38 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.agents.base import Agent
-from app.integrations.payments import GumroadClient, ListingResult, SaleEvent, StripeClient, WhopClient, estimate_fee
+from app.integrations.payments import (
+    CheckoutSignal,
+    GumroadClient,
+    ListingResult,
+    SaleEvent,
+    StripeClient,
+    WhopClient,
+    estimate_fee,
+)
 from app.models import Download, Listing, MarketingKit, Product, Sale, utcnow
 
+YOU_GET = "You get: a .zip with the solution, a 5-step English install guide, .env.example and scripts. Instant download."
+LIMITS = {"stripe": 500, "whop": 1000, "gumroad": 5000}
 
-def listing_description(p: Product, kit: MarketingKit | None) -> str:
-    if not kit:
-        return f"{p.tagline}\n\n{p.idea.mvp}"
-    lp = kit.landing
-    bullets = "\n".join(f"• {b}" for b in lp.get("benefits", []))
-    return f"{lp.get('subheadline', '')}\n\n{bullets}\n\nYou get: a .zip with the solution, an English install guide, .env.example and scripts."
+
+def listing_description(p: Product, kit: MarketingKit | None, platform: str = "stripe") -> str:
+    """Formatted for each platform: Stripe shows short plain text, Whop plain text with bullets, Gumroad renders HTML."""
+    lp = (kit.landing if kit else None) or {"subheadline": p.tagline, "benefits": [p.idea.mvp] if p.idea else []}
+    benefits = lp.get("benefits", [])[:5]
+    anchor = lp.get("value_anchor", "")
+    if platform == "gumroad":
+        e = html.escape
+        pas = lp.get("pas") or {}
+        body = (f"<p><strong>{e(lp.get('subheadline', ''))}</strong></p>"
+                + (f"<p>{e(pas.get('problem', ''))} {e(pas.get('agitate', ''))}</p><p>{e(pas.get('solve', ''))}</p>" if pas else "")
+                + "<ul>" + "".join(f"<li>{e(b)}</li>" for b in benefits) + "</ul>"
+                + (f"<p>{e(anchor)}</p>" if anchor else "") + f"<p>{e(YOU_GET)}</p>")
+    elif platform == "whop":
+        body = f"{lp.get('subheadline', '')}\n\n" + "\n".join(f"• {b}" for b in benefits) + (f"\n\n{anchor}" if anchor else "") + f"\n\n{YOU_GET}"
+    else:
+        body = f"{lp.get('subheadline', '')} {anchor} {YOU_GET}".strip()
+    return body[: LIMITS.get(platform, 1000)]
 
 
 class Sales(Agent):
@@ -35,11 +57,10 @@ class Sales(Agent):
         await self.status("working", f"Publishing {product.name} on {', '.join(clients) or 'the studio page'}")
         async with self.ctx.db.session() as ses:
             kit = await ses.scalar(select(MarketingKit).where(MarketingKit.product_id == product.id))
-        desc = listing_description(product, kit)
         out: list[Listing] = []
         for name, client in clients.items():
             try:
-                res = await client.publish(product.id, product.name, desc, product.price_cents)
+                res = await client.publish(product.id, product.name, listing_description(product, kit, name), product.price_cents)
             except Exception as exc:  # one platform down must not block the others
                 res = ListingResult(name, "", "", "error", str(exc)[:500])
             async with self.ctx.db.session() as ses:
@@ -66,6 +87,57 @@ class Sales(Agent):
             await self.log("publish_blocked", f"{product.name} not live yet: {why}", product_id=product.id)
             await self.status("blocked", "Waiting for a sales platform key")
         return out
+
+    async def pause(self, pid: int) -> None:
+        """Stop selling a product: deactivate its Stripe payment link and mark it paused (reversible: approve again)."""
+        async with self.ctx.db.session() as ses:
+            p = await ses.get(Product, pid)
+            listings = (await ses.scalars(select(Listing).where(Listing.product_id == pid))).all()
+        clients = self._clients()
+        for x in listings:
+            if x.platform == "stripe" and x.status == "live" and isinstance(clients.get("stripe"), StripeClient):
+                try:
+                    await clients["stripe"].deactivate(x.external_id)  # type: ignore[union-attr]
+                except Exception as exc:
+                    await self.log("pause_error", f"Could not deactivate {x.external_id}: {exc}")
+                    continue
+            async with self.ctx.db.session() as ses:
+                row = await ses.get(Listing, x.id)
+                if row:
+                    row.status = "paused"
+        async with self.ctx.db.session() as ses:
+            row = await ses.get(Product, pid)
+            if row:
+                row.status = "paused"
+        await self.log("pause", f"Paused {p.name if p else pid}")
+
+    async def checkout_signal(self, sig: CheckoutSignal) -> str:
+        """Abandoned checkout -> one recovery email, only with marketing consent. Failed payment -> logged for the CEO."""
+        stats = await self.ctx.db.get_state("checkout")
+        stats[sig.kind] = int(stats.get(sig.kind, 0)) + 1
+        action = "logged"
+        if sig.kind == "abandoned" and sig.email and sig.consent:
+            sent_to = set(stats.get("recovered_to", []))
+            key = f"{sig.email.lower()}|{sig.listing_ref}"
+            async with self.ctx.db.session() as ses:
+                listing = await ses.scalar(select(Listing).where(Listing.platform == "stripe", Listing.external_id == sig.listing_ref))
+                product = await ses.get(Product, listing.product_id) if listing else None
+            if listing and product and key not in sent_to:
+                body = (f"<p>You were one step away from <b>{html.escape(product.name)}</b>.</p>"
+                        f"<p>{html.escape(product.tagline)}</p><p><a href=\"{listing.url}\">Finish your order</a> "
+                        "— instant download, 5-minute setup.</p><p>Questions before buying? Just reply.</p>")
+                if await self.ctx.notify.email(sig.email, f"Still want {product.name}?", body):
+                    sent_to.add(key)
+                    stats["recovery_emails"] = int(stats.get("recovery_emails", 0)) + 1
+                    action = "recovery email sent"
+            stats["recovered_to"] = sorted(sent_to)[-2000:]
+        elif sig.kind == "abandoned":
+            action = "no consent: not contacted"
+        await self.ctx.db.set_state("checkout", stats)
+        await self.log(sig.kind, f"Checkout {sig.kind}{' (' + sig.reason + ')' if sig.reason else ''}: {action}")
+        if sig.kind == "failed":
+            await self.ctx.notify.ceo(f"⚠️ Payment failed ({sig.reason}). Failed so far: {stats['failed']}")
+        return action
 
     async def record_sale(self, ev: SaleEvent) -> Sale | None:
         """Idempotent per (platform, external_id). Refund events flip an existing sale."""

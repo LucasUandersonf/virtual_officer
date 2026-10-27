@@ -7,10 +7,27 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Connection, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import Base, OfficeState
+
+
+def _add_missing_columns(conn: Connection) -> None:
+    """create_all never alters existing tables: add columns introduced after a table was created.
+
+    Only additive and only for nullable columns (new rows get the ORM default). Renames, type changes
+    and drops still need a real migration.
+    """
+    insp = inspect(conn)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        have = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name not in have and col.nullable:
+                ddl = col.type.compile(dialect=conn.dialect)
+                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))
 
 
 class Database:
@@ -24,9 +41,9 @@ class Database:
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def init(self) -> None:
-        # create_all is idempotent; schema changes beyond new tables need a migration (see README).
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_add_missing_columns)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

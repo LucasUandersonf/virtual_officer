@@ -34,6 +34,13 @@ class Topic:
     steps: tuple[Step, ...] = ()
     env: tuple[tuple[str, str], ...] = ()
     logic: str = ""  # python services: body of logic.py
+    # Iris's frameworks (see app/agents/frameworks.py)
+    hours_saved_month: float = 4.0
+    setup_minutes: int = 5  # buyer's time-to-value: import + fill keys + activate
+    integrations: tuple[str, ...] = ()
+    search_queries: tuple[str, ...] = ()  # English searches with buying intent
+    ecosystems: tuple[str, ...] = ()
+    commodity: bool = False  # saturated "one prompt + one API" idea
 
 
 _LEAD_LOGIC = '''"""Score inbound leads 0-100 and route hot ones."""
@@ -121,7 +128,10 @@ TOPICS: tuple[Topic, ...] = (
          Step("email", "Rebooking Offer", {"subject": "We missed you, pick a new time",
                                                 "text": "We missed you today! Pick a new time here: {{$env.REBOOK_LINK}}"})),
         (("BOOKING_API_URL", "Your booking tool API base URL (Cal.com / Calendly)"),
-         ("SMTP_FROM", "Sender address for reminders"), ("REBOOK_LINK", "Your public booking link"))),
+         ("SMTP_FROM", "Sender address for reminders"), ("REBOOK_LINK", "Your public booking link")),
+        hours_saved_month=6, setup_minutes=5, integrations=('Cal.com/Calendly', 'SMTP email', 'booking API'),
+        search_queries=('no show reminder automation', 'calendly reminder n8n template', 'reduce no-shows automatically'), ecosystems=('n8n', 'calendly', 'cal.com'),
+    ),
     Topic(
         "lead_capture", ("lead gen", "lead generation", "leads from", "capture leads", "lead magnet", "inbound leads", "crm"),
         "Freelancers and agencies with a contact form",
@@ -134,7 +144,10 @@ TOPICS: tuple[Topic, ...] = (
          Step("if", "Hot Lead?", {"field": "score", "gte": 60}), Step("slack", "Alert Hot Lead"),
          Step("respond", "Respond OK")),
         (("GOOGLE_SHEET_ID", "Spreadsheet that acts as your lead CRM"), ("SLACK_CHANNEL", "Channel for hot-lead alerts"),
-         ("SMTP_FROM", "Sender address for replies"))),
+         ("SMTP_FROM", "Sender address for replies")),
+        hours_saved_month=8, setup_minutes=5, integrations=('web form', 'Google Sheets', 'SMTP email', 'Slack'),
+        search_queries=('auto reply to leads n8n', 'lead capture google sheets automation', 'instant lead response template'), ecosystems=('n8n', 'google sheets', 'slack'),
+    ),
     Topic(
         "client_onboarding", ("client onboarding", "onboarding new clients", "onboard clients", "welcome packet", "intake form"),
         "Service freelancers and small agencies",
@@ -148,28 +161,40 @@ TOPICS: tuple[Topic, ...] = (
          Step("wait", "Wait 2 Days", {"amount": 2, "unit": "days"}), Step("if", "Intake Done?", {"field": "intake_completed", "equals": True}),
          Step("email", "Intake Nudge", {"subject": "Quick reminder: your intake form"})),
         (("PM_WEBHOOK_URL", "Webhook of your project tool (Trello/ClickUp/Notion via n8n)"),
-         ("INTAKE_FORM_URL", "Link to your intake form"), ("SMTP_FROM", "Sender address"))),
+         ("INTAKE_FORM_URL", "Link to your intake form"), ("SMTP_FROM", "Sender address")),
+        hours_saved_month=6, setup_minutes=5, integrations=('payment/contract webhook', 'Google Drive', 'SMTP email', 'project tool'),
+        search_queries=('client onboarding automation n8n', 'freelancer onboarding workflow template'), ecosystems=('n8n', 'stripe', 'notion'),
+    ),
     Topic(
         "invoice_chasing", ("invoice", "late payment", "unpaid", "overdue", "chasing payments", "accounts receivable"),
         "Freelancers and consultants who invoice clients",
         "Chasing overdue invoices is awkward and manual; cash flow suffers because reminders go out late or never.",
         "python", "Invoice Chaser API", "Polite-to-firm payment reminders that run themselves.",
         "FastAPI service: daily endpoint reads open invoices, picks the right reminder stage, returns what to send.", 49,
-        logic=_INVOICE_LOGIC),
+        logic=_INVOICE_LOGIC,
+        hours_saved_month=5, setup_minutes=8, integrations=('invoicing tool export', 'email provider'),
+        search_queries=('automatic invoice reminders', 'chase unpaid invoices automation'), ecosystems=('stripe', 'quickbooks', 'xero'),
+    ),
     Topic(
         "review_replies", ("google reviews", "review replies", "reply to reviews", "reputation", "yelp", "trustpilot"),
         "Local businesses and e-commerce stores",
         "Reviews pile up unanswered; negative ones hurt the rating and nobody notices them in time.",
         "python", "Review Responder API", "Every review answered on-brand, angry ones escalated instantly.",
         "FastAPI webhook: classify review sentiment, draft reply, flag negative ones for a human.", 39,
-        logic=_REVIEW_LOGIC),
+        logic=_REVIEW_LOGIC,
+        hours_saved_month=4, setup_minutes=5, integrations=('review platform webhook', 'Slack/email'),
+        search_queries=('reply to google reviews automatically', 'review response template'), ecosystems=('shopify',),
+    ),
     Topic(
         "lead_scoring", ("lead scoring", "qualify leads", "lead qualification", "which leads"),
         "B2B solopreneurs and small sales teams",
         "All leads look the same; time goes to tire-kickers while serious buyers wait.",
         "python", "Lead Scoring Microservice", "Know in one second which lead deserves your call.",
         "FastAPI webhook: score 0-100 from email domain, company and intent words; route hot leads.", 59,
-        logic=_LEAD_LOGIC),
+        logic=_LEAD_LOGIC,
+        hours_saved_month=4, setup_minutes=5, integrations=('CRM/form webhook', 'email domain rules'),
+        search_queries=('lead scoring api', 'qualify inbound leads automatically'), ecosystems=('hubspot',),
+    ),
     Topic(
         "social_repurpose", ("repurpose content", "social media posting", "schedule posts", "content calendar", "linkedin posts"),
         "Creators, coaches and consultants who sell via content",
@@ -181,7 +206,10 @@ TOPICS: tuple[Topic, ...] = (
          Step("http", "Rewrite With AI", {"url": "https://api.groq.com/openai/v1/chat/completions"}),
          Step("sheets", "Add To Content Queue")),
         (("RSS_URL", "Feed of your blog/newsletter"), ("GROQ_API_KEY", "Free Groq key for rewriting"),
-         ("GOOGLE_SHEET_ID", "Sheet used as the posting queue"))),
+         ("GOOGLE_SHEET_ID", "Sheet used as the posting queue")),
+        hours_saved_month=3, setup_minutes=5, integrations=('RSS', 'LLM API'),
+        search_queries=('repurpose blog post to linkedin ai',), ecosystems=('openai',), commodity=True,
+    ),
     Topic(
         "email_triage", ("inbox zero", "email overload", "too many emails", "sort emails", "email triage"),
         "Busy solo founders",
@@ -191,7 +219,10 @@ TOPICS: tuple[Topic, ...] = (
         (Step("schedule", "Every Hour", {"hours": 1}), Step("http", "Fetch Unread", {"url": "https://gmail.googleapis.com/gmail/v1/users/me/messages"}),
          Step("http", "Classify With AI", {"url": "https://api.groq.com/openai/v1/chat/completions"}),
          Step("if", "Urgent?", {"field": "label", "equals": "urgent"}), Step("slack", "Ping Me")),
-        (("GROQ_API_KEY", "Free Groq key used for classification"), ("SLACK_CHANNEL", "Channel for urgent mail"))),
+        (("GROQ_API_KEY", "Free Groq key used for classification"), ("SLACK_CHANNEL", "Channel for urgent mail")),
+        hours_saved_month=6, setup_minutes=5, integrations=('Gmail API', 'Groq LLM', 'Slack'),
+        search_queries=('ai email triage gmail n8n', 'auto label gmail with ai'), ecosystems=('n8n', 'gmail', 'slack'),
+    ),
     Topic(
         "weekly_report", ("weekly report", "kpi report", "client reporting", "reporting dashboard", "monthly report"),
         "Agencies and freelancers reporting to clients",
@@ -201,7 +232,10 @@ TOPICS: tuple[Topic, ...] = (
         (Step("schedule", "Every Week", {"hours": 168}), Step("http", "Pull Metrics", {"url": "={{$env.METRICS_API_URL}}"}),
          Step("code", "Build Summary", {"js": "const d=$json;return [{json:{summary:`Visits: ${d.visits||0} | Leads: ${d.leads||0} | Revenue: ${d.revenue||0}`}}];"}),
          Step("email", "Send Report", {"subject": "Your weekly results"})),
-        (("METRICS_API_URL", "Endpoint that returns the client's metrics"), ("SMTP_FROM", "Sender address"))),
+        (("METRICS_API_URL", "Endpoint that returns the client's metrics"), ("SMTP_FROM", "Sender address")),
+        hours_saved_month=6, setup_minutes=5, integrations=('metrics API', 'SMTP email'),
+        search_queries=('automated client report n8n', 'weekly kpi email automation'), ecosystems=('n8n', 'google sheets'),
+    ),
     Topic(
         "abandoned_cart", ("abandoned cart", "cart recovery", "checkout abandon", "shopify abandoned"),
         "Small e-commerce stores (Shopify, WooCommerce)",
@@ -213,7 +247,10 @@ TOPICS: tuple[Topic, ...] = (
          Step("if", "Still Abandoned?", {"field": "ordered", "equals": False}),
          Step("email", "Reminder", {"subject": "You left something behind"}), Step("wait", "Wait 24 Hours", {"amount": 24, "unit": "hours"}),
          Step("email", "Discount Offer", {"subject": "10% off to finish your order"})),
-        (("STORE_API_URL", "Your store API base URL"), ("DISCOUNT_CODE", "Code offered in the last email"))),
+        (("STORE_API_URL", "Your store API base URL"), ("DISCOUNT_CODE", "Code offered in the last email")),
+        hours_saved_month=5, setup_minutes=5, integrations=('store webhook', 'store API', 'SMTP email'),
+        search_queries=('abandoned cart email n8n', 'woocommerce abandoned cart automation'), ecosystems=('n8n', 'shopify', 'woocommerce'),
+    ),
     Topic(
         "testimonials", ("testimonial", "collect reviews", "case study", "social proof"),
         "Coaches, course creators and freelancers",
@@ -223,7 +260,10 @@ TOPICS: tuple[Topic, ...] = (
         (Step("webhook", "Project Completed"), Step("wait", "Wait 3 Days", {"amount": 3, "unit": "days"}),
          Step("email", "Ask For Testimonial", {"subject": "Could you share 2 sentences about working together?"}),
          Step("sheets", "Save Testimonial")),
-        (("TESTIMONIAL_FORM_URL", "Your testimonial form link"), ("GOOGLE_SHEET_ID", "Where testimonials are stored"))),
+        (("TESTIMONIAL_FORM_URL", "Your testimonial form link"), ("GOOGLE_SHEET_ID", "Where testimonials are stored")),
+        hours_saved_month=2, setup_minutes=5, integrations=('project webhook', 'SMTP email', 'Google Sheets'),
+        search_queries=('collect testimonials automatically',), ecosystems=('n8n', 'google sheets'),
+    ),
     Topic(
         "meeting_notes", ("meeting notes", "call summary", "transcript", "follow-up email after call"),
         "Consultants and sales-led solopreneurs",
@@ -232,7 +272,10 @@ TOPICS: tuple[Topic, ...] = (
         "Recording webhook (Zoom/Fireflies) -> AI summary + action items -> draft follow-up email -> log in sheet.", 49,
         (Step("webhook", "Transcript Ready"), Step("http", "Summarize With AI", {"url": "https://api.groq.com/openai/v1/chat/completions"}),
          Step("email", "Follow-Up Draft", {"subject": "Recap + next steps from our call"}), Step("sheets", "Log Call Notes")),
-        (("GROQ_API_KEY", "Free Groq key used for summaries"), ("GOOGLE_SHEET_ID", "Call log sheet"))),
+        (("GROQ_API_KEY", "Free Groq key used for summaries"), ("GOOGLE_SHEET_ID", "Call log sheet")),
+        hours_saved_month=6, setup_minutes=5, integrations=('recording webhook', 'Groq LLM', 'SMTP email', 'Google Sheets'),
+        search_queries=('zoom transcript summary n8n', 'automatic follow up email after call'), ecosystems=('n8n', 'openai', 'google sheets'),
+    ),
 )
 
 BY_KEY = {t.key: t for t in TOPICS}

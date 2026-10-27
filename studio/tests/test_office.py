@@ -43,7 +43,9 @@ async def test_pipeline_runs_offline(office):
         ideas = (await s.scalars(select(Idea))).all()
         products = (await s.scalars(select(Product))).unique().all()
         costs = (await s.scalars(select(CostEntry))).all()
-    assert len(ideas) == 3 and all(i.provider == "playbook" for i in ideas)
+    kept = [i for i in ideas if i.provider == "playbook"]
+    discarded = [i for i in ideas if i.provider == "frameworks"]
+    assert len(kept) == 3 and discarded and all(i.status == "rejected" and "Discarded by Iris" in i.rationale for i in discarded)
     assert products and all(p.qa["ok"] for p in products)
     assert all(p.status == "ready" for p in products)  # AUTOPUBLISH off: waits for the CEO
     assert {c.category for c in costs} == {"railway", "other", "llm"}
@@ -101,7 +103,8 @@ def test_workflow_builder_and_validator():
     report = n8n.validate_workflow(wf)
     assert report["ok"], report
     names = [n["name"] for n in wf["nodes"]]
-    assert "X" not in names and wf["connections"]["In"]["main"][0][0]["node"] == "Map"
+    assert "X" not in names and wf["connections"]["In"]["main"][0][0]["node"] == n8n.GUARD_NAME
+    assert wf["connections"][n8n.GUARD_NAME]["main"][0][0]["node"] == "Map"
     mail = next(n for n in wf["nodes"] if n["name"] == "Mail")
     assert "$('Map').item.json.email" in mail["parameters"]["toEmail"]
     assert "SMTP_FROM" in n8n.env_vars(wf)
@@ -157,3 +160,39 @@ async def test_llm_router_validates_and_falls_back(settings):
     obj, provider = await router.json("t", "sys", "user", Out, lambda: Out(answer="fallback"))
     assert (obj.answer, provider) == ("fallback", "playbook")
     await client.aclose()
+
+
+async def test_cfo_audit_flags_stale_products(office):
+    from datetime import timedelta
+
+    from app.models import utcnow
+
+    await office.tick()
+    async with office.ctx.db.session() as s:
+        p = (await s.scalars(select(Product))).unique().first()
+        p.status, p.published_at = "published", utcnow() - timedelta(days=25)
+    flagged = await office.cfo.audit(office.growth, office.sales)
+    assert [f["health"] for f in flagged] == ["reposition"]
+    assert (await office.ctx.db.get_state("portfolio"))["repositioned"] == [p.id]
+    econ = await office.cfo.economics(Idea(score=70, price_cents=4700, assessment={"urgency": "hair_on_fire"}))
+    assert econ.contribution_margin > 0.9 and econ.ok
+
+
+async def test_abandoned_checkout_gets_one_recovery_email_only_with_consent(office, monkeypatch):
+    from app.integrations.payments import CheckoutSignal
+
+    sent = []
+
+    async def fake_email(to, subject, html):
+        sent.append(to)
+        return True
+
+    monkeypatch.setattr(office.ctx.notify, "email", fake_email)
+    await office.tick()
+    async with office.ctx.db.session() as s:
+        p = (await s.scalars(select(Product))).unique().first()
+        s.add(Listing(product_id=p.id, platform="stripe", external_id="plink_r", url="https://buy.stripe.com/r"))
+    assert await office.sales.checkout_signal(CheckoutSignal("abandoned", "cs_a", "x@y.co", "plink_r", False)) == "no consent: not contacted"
+    assert await office.sales.checkout_signal(CheckoutSignal("abandoned", "cs_b", "x@y.co", "plink_r", True)) == "recovery email sent"
+    assert await office.sales.checkout_signal(CheckoutSignal("abandoned", "cs_c", "x@y.co", "plink_r", True)) == "logged"
+    assert sent == ["x@y.co"]

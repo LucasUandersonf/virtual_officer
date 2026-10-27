@@ -12,7 +12,35 @@ import re
 import uuid
 from typing import Any
 
+from app.services.packaging import find_secrets
+
 TRIGGERS = {"webhook", "schedule"}
+EXTERNAL = {"http", "email", "slack", "sheets"}  # nodes that call another system: retried with backoff
+RETRY = {"retryOnFail": True, "maxTries": 3, "waitBetweenTries": 2000}
+GUARD_NAME = "Guard: Auth, Validate, Dedupe"
+
+# Runs right after the webhook. Defensive by design: rejects calls without the shared secret (when
+# WEBHOOK_SECRET is set), drops payloads missing required fields, and drops deliveries already seen
+# (idempotency key = id/event_id or the payload itself, kept in workflow static data), so a provider
+# retrying a webhook never sends a second email or creates a second record.
+GUARD_JS = """const REQUIRED = %s;
+const store = $getWorkflowStaticData('global');
+store.seen = store.seen || [];
+const out = [];
+$input.all().forEach((item, i) => {
+  const headers = item.json.headers || {};
+  const secret = $env.WEBHOOK_SECRET;
+  if (secret && headers['x-webhook-secret'] !== secret) return;
+  const body = item.json.body || {};
+  const missing = REQUIRED.filter((f) => body[f] === undefined || body[f] === null || body[f] === '');
+  if (missing.length) return;
+  const key = String(body.id || body.event_id || body.uid || JSON.stringify(body));
+  if (store.seen.includes(key)) return;
+  store.seen.push(key);
+  if (store.seen.length > 1000) store.seen.shift();
+  out.push({ json: { ...item.json, idempotency_key: key }, pairedItem: i });
+});
+return out;"""
 KINDS = TRIGGERS | {"http", "set", "if", "code", "email", "slack", "sheets", "wait", "respond"}
 ENV_RE = re.compile(r"\$env\.([A-Z][A-Z0-9_]*)")
 
@@ -32,7 +60,7 @@ def _node(kind: str, name: str, params: dict[str, Any], slug: str, has_respond: 
             "rule": {"interval": [{"field": "hours", "hoursInterval": int(p.get("hours", 24))}]}}}
     if kind == "http":
         return {"type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "parameters": {
-            "method": str(p.get("method", "GET")).upper(), "url": str(p.get("url", "={{$env.API_URL}}")), "options": {}}}
+            "method": str(p.get("method", "GET")).upper(), "url": str(p.get("url", "={{$env.API_URL}}")), "options": {"timeout": 15000}}}
     if kind == "set":
         fields = p.get("fields") or ["email"]
         return {"type": "n8n-nodes-base.set", "typeVersion": 3.4, "parameters": {"assignments": {"assignments": [
@@ -83,8 +111,13 @@ def build_workflow(name: str, slug: str, steps: list[dict[str, Any]], guide: str
     steps = [s for s in steps if s.get("kind") in KINDS]
     if not steps or steps[0]["kind"] not in TRIGGERS:
         steps.insert(0, {"kind": "webhook", "name": "Trigger"})
-    steps = [steps[0]] + [s for s in steps[1:] if s["kind"] not in TRIGGERS]
-    has_respond = any(s["kind"] == "respond" for s in steps)
+    # Webhooks are acknowledged on receipt (fast 200, providers stop retrying); the guard then filters.
+    steps = [steps[0]] + [s for s in steps[1:] if s["kind"] not in TRIGGERS | {"respond"}]
+    has_respond = False
+    if steps[0]["kind"] == "webhook":
+        sets = [s for s in steps if s["kind"] == "set"]
+        required = list((sets[0].get("params") or {}).get("fields") or ["email"]) if sets else ["email"]
+        steps.insert(1, {"kind": "code", "name": GUARD_NAME, "params": {"js": GUARD_JS % json.dumps(required)}})
     nodes: list[dict[str, Any]] = [{
         "id": _uid(), "name": "Setup Guide", "type": "n8n-nodes-base.stickyNote", "typeVersion": 1,
         "position": [-260, -260], "parameters": {"content": guide[:2000], "height": 300, "width": 420}}]
@@ -99,9 +132,9 @@ def build_workflow(name: str, slug: str, steps: list[dict[str, Any]], guide: str
         if i == 0:
             src = "$json.body" if st["kind"] == "webhook" else "$json"
         node = _node(st["kind"], nm, dict(st.get("params") or {}), slug, has_respond, src)
-        nodes.append({"id": _uid(), "name": nm, "position": [i * 240, 0], **node})
+        nodes.append({"id": _uid(), "name": nm, "position": [i * 240, 0], **node, **(RETRY if st["kind"] in EXTERNAL else {})})
         names.append(nm)
-        if i == 0 and st["kind"] == "webhook":
+        if nm == GUARD_NAME:
             src = f"$('{nm}').item.json.body"
         elif st["kind"] in ("set", "code"):
             src = f"$('{nm}').item.json"
@@ -132,4 +165,11 @@ def validate_workflow(wf: dict[str, Any]) -> dict[str, Any]:
     check("all steps connected", len(targets) == len(work) - 1, f"{len(targets)} links for {len(work)} steps")
     codes = [n["parameters"].get("jsCode", "") for n in nodes if n.get("type") == "n8n-nodes-base.code"]
     check("code nodes balanced", all(c.count("{") == c.count("}") and c.count("(") == c.count(")") for c in codes))
+    has_webhook = any(n.get("type") == "n8n-nodes-base.webhook" for n in nodes)
+    check("webhook guarded (auth + validation + idempotency)", not has_webhook or GUARD_NAME in names)
+    ext = [n for n in nodes if n.get("type") in ("n8n-nodes-base.httpRequest", "n8n-nodes-base.emailSend",
+                                                  "n8n-nodes-base.slack", "n8n-nodes-base.googleSheets")]
+    check("external calls retry with backoff", all(n.get("retryOnFail") and n.get("maxTries", 0) >= 2 for n in ext), f"{len(ext)} nodes")
+    leaks = find_secrets(json.dumps(wf))
+    check("no hard-coded secrets", not leaks, ", ".join(leaks))
     return {"ok": all(c["ok"] for c in checks), "checks": checks}

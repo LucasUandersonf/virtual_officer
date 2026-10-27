@@ -19,9 +19,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.agents import frameworks
 from app.agents.base import PERSONAS, Context
 from app.agents.builder import Builder, effort_hours
 from app.agents.cfo import CFO
+from app.agents.frameworks import charm_price
 from app.agents.growth import Growth
 from app.agents.product import HeadOfProduct
 from app.agents.sales import Sales
@@ -30,7 +32,6 @@ from app.services import finance
 
 log = logging.getLogger(__name__)
 ORDER = ("product", "builder", "growth", "sales", "cfo")
-PRICE_BAND = (19, 149)
 
 
 class Lines(BaseModel):
@@ -100,36 +101,53 @@ class Office:
 
     # ------------------------------------------------------------------ idea review
     async def review_idea(self, idea: Idea) -> str:
+        """Each agent votes with its own framework (numbers in code); one LLM call writes the minutes."""
+        a = dict(idea.assessment or {})
         eco = await self.cfo.economics(idea)
-        price = idea.price_cents // 100
         hours = effort_hours(idea)
         n_ev = len(idea.evidence or [])
-        new_price = min(max(price, PRICE_BAND[0]), PRICE_BAND[1])
+        price = idea.price_cents // 100
+        new_price = charm_price(price)
+        ttv = int(a.get("ttv_minutes", 5))
+        dist = float(a.get("distribution", 0))
+        value_low = float(a.get("value_month_low", 0))
+        ratio = value_low / new_price if new_price else 0.0
         votes = {
-            "product": "APPROVE" if idea.score >= 2 else "ABSTAIN",
-            "builder": "APPROVE" if idea.solution_type in ("n8n", "python") and hours <= 8 else "REJECT",
-            "growth": "APPROVE" if n_ev >= 2 or idea.score >= 4 else "REJECT",
-            "sales": "APPROVE",
+            # Iris: hair-on-fire/important pain, TTV <= 5 min, moat >= 2, not a commodity, MVP score >= 45
+            "product": "APPROVE" if a.get("approve", idea.score >= 2) else "REJECT",
+            # Theo: buildable in a day and installable in <= 5 minutes
+            "builder": "APPROVE" if idea.solution_type in ("n8n", "python") and hours <= 8 and ttv <= frameworks.TTV_LIMIT_MIN else "REJECT",
+            # Maya: zero-CAC distribution (search intent + ecosystem) and not saturated
+            "growth": "APPROVE" if (dist >= 5 or (not a and n_ev >= 2)) and not a.get("commodity") else "REJECT",
+            # Leo: charm price in $19-149 and a no-brainer (one month of value >= 3x the price)
+            "sales": "APPROVE" if ratio >= 3 or not a else "REJECT",
+            # Nina: payback >= 1, contribution margin >= 70 %, build slot free
             "cfo": "APPROVE" if eco.ok else "REJECT",
         }
         approvals = sum(v == "APPROVE" for v in votes.values())
         decision = "approved" if votes["cfo"] == "APPROVE" and approvals >= 4 else "rejected"
-        data = {"product": {"score": idea.score, "evidence": n_ev}, "builder": {"effort_h": hours},
-                "growth": {"evidence": n_ev}, "sales": {"price_usd": new_price, "was": price},
+        data = {"product": {k: a.get(k) for k in ("urgency", "opportunity", "wtp", "moat", "mvp_score")} | {"evidence": n_ev},
+                "builder": {"effort_h": hours, "ttv_min": ttv},
+                "growth": {"distribution": dist, "commodity": bool(a.get("commodity"))},
+                "sales": {"price_usd": new_price, "was": price, "value_month_low": value_low, "no_brainer": round(ratio, 1)},
                 "cfo": {"est_sales_month": eco.est_monthly_sales, "est_net_usd": eco.est_monthly_net_usd,
-                        "cost_share_usd": eco.cost_share_usd, "payback": eco.payback_ratio, "builds_left": eco.builds_left_today}}
-        cfo_why = ("no build slot left today" if eco.builds_left_today == 0 else
-                   f"expected ${eco.est_monthly_net_usd:.0f}/month net vs ${eco.cost_share_usd:.2f} share of the office cost "
-                   f"(×{eco.payback_ratio:.1f})")
+                        "margin": eco.contribution_margin, "cost_share_usd": eco.cost_share_usd, "payback": eco.payback_ratio,
+                        "builds_left": eco.builds_left_today}}
+        cfo_why = "; ".join(eco.reasons()) or (f"${eco.est_monthly_net_usd:.0f}/month expected vs ${eco.cost_share_usd:.2f} share "
+                                               f"(×{eco.payback_ratio:.1f}), margin {eco.contribution_margin:.0%}")
+        urg = str(a.get("urgency", "unknown")).replace("_", " ")
         fallback = Lines(
-            product=f"Pitch: {idea.title}. {idea.problem} Evidence score {idea.score:.1f} from {n_ev} signals; buyer: {idea.niche}.",
-            builder=(f"{'Feasible' if votes['builder'] == 'APPROVE' else 'Too big'}: {idea.solution_type} build, about {hours:.1f} h. "
-                     f"MVP: {idea.mvp[:160]}"),
-            growth=("Demand looks real; I can position it on outcome, not features." if votes["growth"] == "APPROVE"
-                    else "Not enough proof of demand yet; I'd wait for more signals."),
-            sales=f"Price ${new_price} one-time" + (f" (adjusted from ${price})" if new_price != price else "") +
-                  f"; channels: {', '.join(self.ctx.settings.platforms()) or 'studio landing page until a platform key is set'}.",
-            cfo=f"{'Approve' if votes['cfo'] == 'APPROVE' else 'Reject'}: {cfo_why}.")
+            product=(f"Pitch: {idea.title}. Urgency: {urg}; opportunity {float(a.get('opportunity', 0)):.1f}/20, WTP "
+                     f"{float(a.get('wtp', 0)):.1f}/10, moat {a.get('moat', '?')} systems, MVP score {idea.score:.0f}. "
+                     f"Buyer: {idea.niche}." if a else f"Pitch: {idea.title}. {idea.problem}"),
+            builder=(f"{'Feasible' if votes['builder'] == 'APPROVE' else 'No'}: {idea.solution_type}, ~{hours:.1f} h to build, buyer "
+                     f"setup ~{ttv} min. Guard node for auth + idempotency, retries on every external call."),
+            growth=(f"Distribution {dist:.0f}/10: clear search intent and an ecosystem to ride; I'll lead with PAS on the measured pain."
+                    if votes["growth"] == "APPROVE" else f"Distribution {dist:.0f}/10 or saturated: no zero-CAC channel, I can't sell it."),
+            sales=(f"${new_price} one-time" + (f" (from ${price})" if new_price != price else "") +
+                   (f": one month of value is ${value_low:.0f}, ×{ratio:.0f} the price — a no-brainer." if a else ".") +
+                   f" Channels: {', '.join(self.ctx.settings.platforms()) or 'studio landing page until a platform key is set'}."),
+            cfo=f"{'Approve' if votes['cfo'] == 'APPROVE' else 'Veto'}: {cfo_why}.")
         facts = "\n".join(f"{k}: vote {votes[k]}; {data[k]}" for k in ORDER) + f"\nIdea: {idea.title} — {idea.problem}\nMVP: {idea.mvp}"
         lines, _ = await self._lines(f"Idea review: {idea.title}", facts, fallback)
         await self._meeting("idea_review", f"Idea review: {idea.title}", idea.id, lines, votes, data, decision,
@@ -146,21 +164,30 @@ class Office:
         s = self.ctx.settings
         g = await finance.goals(self.ctx.db, s)
         scores = await self.product.topic_scores()
-        focus = [t for t, _ in sorted(scores.items(), key=lambda x: -x[1]["score"])[:3]]
-        await self.ctx.db.set_state("strategy", {"focus_topics": focus, "set_at": date.today().isoformat()})
+        margins = await self.cfo.topic_margins(30)
+        # Nina's rule: real contribution margin of the last 30 days first, then Iris's evidence
+        verdicts = await self.product.verdicts()
+        # topics Iris would discard (TTV, commodity, thin moat) only stay in focus if they already make money
+        eligible = [t for t in scores if margins.get(t, 0.0) > 0 or (t in verdicts and verdicts[t].approve)]
+        ranked = sorted(eligible, key=lambda t: (-margins.get(t, 0.0), -scores[t]["score"]))
+        focus = ranked[:3]
+        await self.ctx.db.set_state("strategy", {"focus_topics": focus, "set_at": date.today().isoformat(), "margins": margins})
+        portfolio = await self.cfo.portfolio()
+        stale = [p["name"] for p in portfolio if p["health"] in ("reposition", "shutdown")]
         rev = g["revenue"]
         behind = rev["run_rate"] < rev["target"]
         votes = {k: "" for k in ORDER}
+        by_margin = ", ".join(f"{t} ${m:.0f}" for t, m in sorted(margins.items(), key=lambda x: -x[1])[:3]) or "no sales yet"
         fallback = Lines(
-            cfo=(f"Month to date: ${rev['current']:.2f} net, run-rate ${rev['run_rate']:.2f} vs goal ${rev['target']:.0f}. "
-                 f"Profit MTD ${g['profit_mtd']:.2f}. Office costs ${g['break_even']['monthly_cost_usd']:.2f}/month: "
-                 f"we need ~{g['break_even']['sales_needed']} sales a month to break even."),
-            product=f"Focus for this week: {', '.join(focus) or 'broad research'} — strongest demand signals and any topic that already sold.",
-            builder=f"{g['products_week']['current']}/{g['products_week']['target']} products this week. I'll keep builds small: one-day MVPs.",
-            growth=("We're behind: I'll post one value-first Reddit/LinkedIn piece per live product." if behind
-                    else "On track: I'll double down on the channels that brought sales."),
-            sales=f"{g['live_products']} products live. Every buyer gets the download in minutes; I'll chase refunds and questions daily.")
-        facts = f"Goals snapshot: {g}\nFocus topics chosen by evidence: {focus}"
+            cfo=(f"Month to date: ${rev['current']:.2f} net, run-rate ${rev['run_rate']:.2f} vs goal ${rev['target']:.0f}; profit "
+                 f"${g['profit_mtd']:.2f} after fees and ${g['break_even']['monthly_cost_usd']:.2f}/month of infrastructure. "
+                 f"30-day margin by topic: {by_margin}." + (f" Stale (21+ days, no sale): {', '.join(stale)}." if stale else "")),
+            product=f"Focus this week: {', '.join(focus) or 'broad research'} — real margin first, then the strongest hair-on-fire evidence.",
+            builder=f"{g['products_week']['current']}/{g['products_week']['target']} products this week. Small, guarded builds; setup under 5 minutes.",
+            growth=("We're behind: one value-first Reddit/LinkedIn post per live product, and new angles for the stale ones." if behind
+                    else "On track: double down on the channels that brought sales."),
+            sales=f"{g['live_products']} products live. Download in seconds after the signed webhook; consented abandoned checkouts get one follow-up.")
+        facts = f"Goals snapshot: {g}\n30-day contribution by topic: {margins}\nFocus chosen: {focus}\nStale products: {stale}"
         lines, _ = await self._lines("Weekly goals review", facts, fallback)
         await self._meeting("weekly_goals", "Weekly goals review", None, lines, votes, {"cfo": g}, "focus: " + ", ".join(focus),
                             f"Run-rate ${rev['run_rate']:.2f} vs ${rev['target']:.0f} goal; focus {', '.join(focus)}")
@@ -181,7 +208,7 @@ class Office:
     async def _tick(self) -> dict[str, Any]:
         s = self.ctx.settings
         done: dict[str, Any] = {}
-        await self.cfo.daily_close()
+        await self.cfo.daily_close(self.growth, self.sales)
         if await self._due("research", s.research_interval_min):
             ideas = await self.product.research()
             await self.ctx.db.set_state("research", {"last_at": utcnow().isoformat()})

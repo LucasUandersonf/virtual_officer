@@ -305,3 +305,5 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .mini b { overflow-wrap: anywhere; text-align: right; }
 .sector .focus { font-size: 12px; color: var(--muted); }
 .sector .focus b { color: var(--ink-2); font-weight: 600; }
+.u-fire { background: rgba(255,107,91,.2); color: #FFB0A8; } .u-imp { background: rgba(57,135,229,.2); color: #A9CCF7; }
+.u-nice { background: rgba(152,162,189,.18); color: var(--ink-2); }

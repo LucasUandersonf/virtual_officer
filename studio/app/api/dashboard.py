@@ -118,7 +118,8 @@ async def ideas(request: Request, status: str = "", limit: int = 50) -> list[dic
         rows = (await ses.scalars(q)).all()
     return [{"id": i.id, "topic": i.topic, "title": i.title, "problem": i.problem, "niche": i.niche, "type": i.solution_type,
              "mvp": i.mvp, "price_usd": i.price_cents / 100, "score": i.score, "status": i.status, "evidence": i.evidence,
-             "rationale": i.rationale, "provider": i.provider, "created_at": i.created_at.isoformat()} for i in rows]
+             "rationale": i.rationale, "provider": i.provider, "assessment": i.assessment or {},
+             "created_at": i.created_at.isoformat()} for i in rows]
 
 
 @router.get("/meetings")
@@ -146,7 +147,7 @@ async def signals(request: Request, limit: int = 40) -> list[dict[str, Any]]:
     async with request.app.state.db.session() as ses:
         rows = (await ses.scalars(select(Signal).order_by(Signal.id.desc()).limit(min(limit, 200)))).all()
     return [{"source": x.source, "title": x.title, "url": x.url, "topic": x.topic, "engagement": x.engagement,
-             "intent": x.intent, "at": x.created_at.isoformat()} for x in rows]
+             "intent": x.intent, "assessment": x.assessment or {}, "at": x.created_at.isoformat()} for x in rows]
 
 
 @router.get("/sectors")
@@ -163,13 +164,15 @@ async def sectors(request: Request) -> dict[str, Any]:
         by_plat = {p: (n, g) for p, n, g in (await ses.execute(select(Sale.platform, func.count(Sale.id),
                                                                       func.coalesce(func.sum(Sale.gross_cents), 0))
                                                                .where(Sale.refunded.is_(False)).group_by(Sale.platform))).all()}
+        hot = await ses.scalar(select(func.count(Signal.id)).where(Signal.assessment["urgency"].as_string() == "hair_on_fire")) or 0
+        discarded = await ses.scalar(select(func.count(Idea.id)).where(Idea.provider == "frameworks")) or 0
         undelivered = await ses.scalar(select(func.count(Sale.id)).where(Sale.delivered.is_(False), Sale.product_id.isnot(None))) or 0
     topics = await st.office.product.topic_scores()
     qa_ok = sum(1 for p in prods if p.qa.get("ok"))
     return {
         "product": {"signals_by_source": sig_src, "ideas_by_status": idea_st,
                     "top_topics": sorted(({"topic": k, **v} for k, v in topics.items()), key=lambda x: -x["score"])[:6],
-                    "focus": (await db.get_state("strategy")).get("focus_topics", [])},
+                    "focus": (await db.get_state("strategy")).get("focus_topics", []), "hair_on_fire": hot, "discarded": discarded},
         "builder": {"built": len(prods), "qa_pass": qa_ok, "n8n": sum(p.solution_type == "n8n" for p in prods),
                     "python": sum(p.solution_type == "python" for p in prods),
                     "total_kb": round(sum(p.size_bytes for p in prods) / 1024, 1)},
@@ -177,6 +180,8 @@ async def sectors(request: Request) -> dict[str, Any]:
                    "posts": sum(len(k.social.get("x", [])) + len(k.social.get("linkedin", [])) + len(k.social.get("reddit", [])) for k in kits)},
         "sales": {"listings_live": sum(x.status == "live" for x in listings), "listings_manual": sum(x.status == "manual" for x in listings),
                   "listings_error": sum(x.status == "error" for x in listings), "undelivered": undelivered,
-                  "by_platform": {k: {"sales": n, "gross_usd": g / 100} for k, (n, g) in by_plat.items()}},
-        "cfo": await finance.goals(db, st.settings),
+                  "by_platform": {k: {"sales": n, "gross_usd": g / 100} for k, (n, g) in by_plat.items()},
+                  "checkout": {k: v for k, v in (await db.get_state("checkout")).items() if k != "recovered_to"}},
+        "cfo": {**await finance.goals(db, st.settings), "portfolio": await st.office.cfo.portfolio(),
+                "topic_margins": await st.office.cfo.topic_margins(30)},
     }

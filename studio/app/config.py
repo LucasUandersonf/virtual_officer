@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     # False = products stop at "ready" and wait for one click from the CEO (/api/products/{id}/approve).
     # Turn it on once you have reviewed the first products.
     autopublish: bool = False
+    # CFO audit: pause (deactivate the Stripe link of) products with no sale after 42 days. Off = recommend only.
+    autopause_stale: bool = False
     # Pause between lines in meetings so the office UI can show the conversation (0 in tests).
     theatre_delay_sec: float = 3.0
 

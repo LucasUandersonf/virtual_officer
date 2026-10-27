@@ -45,6 +45,17 @@ class SaleEvent:
     refunded: bool = False
 
 
+@dataclass(frozen=True)
+class CheckoutSignal:
+    """A checkout that did not turn into a sale: abandoned (session expired) or payment failed."""
+    kind: str  # abandoned | failed
+    external_id: str
+    email: str
+    listing_ref: str
+    consent: bool  # buyer opted in to follow-up emails at checkout
+    reason: str = ""
+
+
 class WebhookError(ValueError):
     pass
 
@@ -81,6 +92,9 @@ class StripeClient:
             "after_completion[type]": "redirect",
             "after_completion[redirect][url]": f"{self.s.public_base_url}/thanks?session_id={{CHECKOUT_SESSION_ID}}",
             "metadata[studio_product_id]": str(product_id),
+            # asks for marketing consent where required, so abandoned checkouts can get one recovery email
+            "consent_collection[promotions]": "auto",
+            "allow_promotion_codes": "true",
         })
         return ListingResult("stripe", link["id"], link["url"], "live", f"product {prod['id']} price {price['id']}")
 
@@ -111,6 +125,18 @@ def parse_stripe_event(event: dict[str, Any]) -> SaleEvent | None:
                          (obj.get("customer_details") or {}).get("email") or "", obj.get("payment_link") or "")
     if event.get("type") == "charge.refunded":
         return SaleEvent("stripe", obj.get("payment_intent") or obj["id"], int(obj.get("amount") or 0), "", "", refunded=True)
+    return None
+
+
+def parse_stripe_checkout_signal(event: dict[str, Any]) -> CheckoutSignal | None:
+    obj = event.get("data", {}).get("object", {})
+    if event.get("type") == "checkout.session.expired":
+        consent = (obj.get("consent") or {}).get("promotions") == "opt_in"
+        return CheckoutSignal("abandoned", obj.get("id", ""), (obj.get("customer_details") or {}).get("email") or "",
+                              obj.get("payment_link") or "", consent)
+    if event.get("type") == "payment_intent.payment_failed":
+        err = (obj.get("last_payment_error") or {}).get("code") or "unknown"
+        return CheckoutSignal("failed", obj.get("id", ""), obj.get("receipt_email") or "", "", False, err)
     return None
 
 

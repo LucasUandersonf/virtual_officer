@@ -31,6 +31,8 @@ class Signal(Base):
     topic: Mapped[str] = mapped_column(String(64), default="", index=True)
     engagement: Mapped[int] = mapped_column(Integer, default=0)
     intent: Mapped[float] = mapped_column(Float, default=0.0)
+    # Iris's post-level frameworks: urgency, money/time loss, workaround steps, WTP, opportunity score
+    assessment: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -50,6 +52,8 @@ class Idea(Base):
     status: Mapped[str] = mapped_column(String(16), default="proposed", index=True)
     rationale: Mapped[str] = mapped_column(Text, default="")
     provider: Mapped[str] = mapped_column(String(32), default="")
+    # Iris's idea-level verdict (opportunity, urgency, TTV, distribution, moat, value anchor, MVP score)
+    assessment: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

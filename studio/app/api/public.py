@@ -15,6 +15,7 @@ from app.config import secret
 from app.integrations.payments import (
     WebhookError,
     parse_gumroad_ping,
+    parse_stripe_checkout_signal,
     parse_stripe_event,
     parse_whop_event,
     verify_hmac_hex,
@@ -36,9 +37,12 @@ async def stripe_webhook(request: Request) -> dict[str, bool]:
         verify_stripe_signature(body, request.headers.get("stripe-signature", ""), secret(s.stripe_webhook_secret))
     except WebhookError as exc:
         raise HTTPException(400, str(exc)) from exc
-    ev = parse_stripe_event(json.loads(body))
+    event = json.loads(body)
+    ev = parse_stripe_event(event)
     if ev:
         await request.app.state.office.sales.record_sale(ev)
+    elif sig := parse_stripe_checkout_signal(event):
+        await request.app.state.office.sales.checkout_signal(sig)
     return {"ok": True}
 
 
@@ -96,6 +100,7 @@ color:#fff;text-decoration:none;font-weight:700}}.cta.off{{opacity:.5;pointer-ev
 </style></head><body><main>
 <h1>{title}</h1><p class="sub">{sub}</p>
 <a class="cta{off}" href="{buy}">{cta}</a>
+{pas}
 <div class="box"><ul>{benefits}</ul></div>
 <h2>How it works</h2><ol>{how}</ol>
 <h2>FAQ</h2>{faq}
@@ -122,7 +127,9 @@ async def landing(request: Request, slug: str) -> HTMLResponse:
         benefits="".join(f"<li>{e(b)}</li>" for b in lp.get("benefits", [])),
         how="".join(f"<li>{e(b)}</li>" for b in lp.get("how_it_works", [])),
         faq="".join(f"<p class='q'>{e(f['q'])}</p><p>{e(f['a'])}</p>" for f in lp.get("faq", [])),
-        blurb=e(lp.get("checkout_blurb", ""))))
+        blurb=e(lp.get("checkout_blurb", "")),
+        pas=(f"<h2>{e(pas.get('problem', ''))}</h2><p>{e(pas.get('agitate', ''))}</p><p><strong>{e(pas.get('solve', ''))}</strong></p>"
+             if (pas := lp.get("pas") or {}) else "") + (f"<div class='box'><p>{e(lp['value_anchor'])}</p></div>" if lp.get("value_anchor") else "")))
 
 
 @router.get("/thanks", response_class=HTMLResponse)

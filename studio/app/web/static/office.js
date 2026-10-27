@@ -409,11 +409,15 @@ function renderSectors(sec, summary, activity) {
   const mini = (pairs) => { const m = el("div", "mini"); for (const [k, v] of pairs) { const d = el("div"); d.append(el("span", "muted-sm", k), el("b", "", String(v))); m.append(d); } return m; };
   const pairs = {
     product: [["Sinais", Object.values(sec.product.signals_by_source).reduce((a, b) => a + b, 0)], ["Ideias", Object.values(sec.product.ideas_by_status).reduce((a, b) => a + b, 0)],
-      ["Aprovadas", (sec.product.ideas_by_status.approved || 0) + (sec.product.ideas_by_status.built || 0)], ["Rejeitadas", sec.product.ideas_by_status.rejected || 0]],
+      ["🔥 Hair on fire", sec.product.hair_on_fire || 0], ["Descartadas", sec.product.discarded || 0]],
     builder: [["Construídos", sec.builder.built], ["QA ok", sec.builder.qa_pass], ["n8n", sec.builder.n8n], ["Python", sec.builder.python]],
     growth: [["Kits", sec.growth.kits], ["E-mails", sec.growth.emails], ["Posts", sec.growth.posts], ["Landing pages", sec.growth.kits]],
-    sales: [["Anúncios ativos", sec.sales.listings_live], ["Manuais", sec.sales.listings_manual], ["Com erro", sec.sales.listings_error], ["Sem entrega", sec.sales.undelivered]],
-    cfo: [["Lucro mês", usd(sec.cfo.profit_mtd)], ["Ritmo mês", usd(sec.cfo.revenue.run_rate)], ["Equilíbrio", `${sec.cfo.break_even.sales_needed} vendas`], ["IA hoje", `${sec.cfo.llm_calls_today}/${sec.cfo.llm_budget}`]],
+    sales: [["Anúncios ativos", sec.sales.listings_live], ["Manuais", sec.sales.listings_manual], ["Sem entrega", sec.sales.undelivered],
+      ["Checkouts abandonados", (sec.sales.checkout || {}).abandoned || 0], ["E-mails de recuperação", (sec.sales.checkout || {}).recovery_emails || 0],
+      ["Pagamentos recusados", (sec.sales.checkout || {}).failed || 0]],
+    cfo: [["Lucro mês", usd(sec.cfo.profit_mtd)], ["Ritmo mês", usd(sec.cfo.revenue.run_rate)], ["Equilíbrio", `${sec.cfo.break_even.sales_needed} vendas`], ["IA hoje", `${sec.cfo.llm_calls_today}/${sec.cfo.llm_budget}`],
+      ["Produtos parados 21d+", (sec.cfo.portfolio || []).filter((x) => ["reposition", "shutdown"].includes(x.health)).length],
+      ["Margem 30d (top)", Object.values(sec.cfo.topic_margins || {}).length ? usd(Math.max(...Object.values(sec.cfo.topic_margins))) : "—"]],
   };
   for (const r of ROLES) {
     const a = AGENTS[r], info = summary.agents[r] || {};
@@ -438,7 +442,7 @@ function renderKanban(ideas, products) {
   for (const [title, items] of cols) {
     const c = el("div", "kcol"); const h = el("h3"); h.append(el("span", "", title), el("span", "", String(items.length))); c.append(h);
     for (const it of items.slice(0, 8)) {
-      const d = el("div", "item"); d.append(el("strong", "", it.title || it.name), el("span", "meta", `${it.type} · ${usd(it.price_usd, 0)}${it.score !== undefined ? ` · score ${it.score}` : ""}${it.sales ? ` · ${it.sales} vendas` : ""}`));
+      const d = el("div", "item"); d.append(el("strong", "", it.title || it.name), el("span", "meta", `${it.type} · ${usd(it.price_usd, 0)}${it.assessment && URG[it.assessment.urgency] ? ` · ${URG[it.assessment.urgency][0]}` : ""}${it.score !== undefined ? ` · MVP ${Math.round(it.score)}` : ""}${it.sales ? ` · ${it.sales} vendas` : ""}`));
       c.append(d);
     }
     if (!items.length) c.append(el("div", "empty", "—"));
@@ -470,15 +474,27 @@ function renderProducts(products, summary) {
   }
 }
 
+const URG = { hair_on_fire: ["🔥 Hair on fire", "u-fire"], important: ["Importante", "u-imp"], nice_to_have: ["Nice-to-have", "u-nice"] };
+
 function renderIdeas(ideas) {
   const t = $("ideas"); t.replaceChildren();
-  const hr = el("tr"); ["Ideia", "Nicho", "Tipo", "Preço", "Score", "Evidências", "Status"].forEach((h) => hr.append(el("th", "", h))); t.append(hr);
-  if (!ideas.length) { const tr = el("tr"); const td = el("td", "empty", "Nenhuma ideia ainda: a primeira pesquisa roda quando o escritório liga."); td.colSpan = 7; tr.append(td); t.append(tr); return; }
+  const cols = ["Ideia", "Urgência", "Opp. /20", "WTP /10", "TTV", "Moat", "Distrib.", "Valor/mês", "Preço", "MVP", "Evidências", "Status"];
+  const hr = el("tr"); cols.forEach((h) => hr.append(el("th", "", h))); t.append(hr);
+  if (!ideas.length) { const tr = el("tr"); const td = el("td", "empty", "Nenhuma ideia ainda: a primeira pesquisa roda quando o escritório liga."); td.colSpan = cols.length; tr.append(td); t.append(tr); return; }
+  const n = (v, d = 1) => (v === undefined || v === null ? "—" : Number(v).toFixed(d));
   for (const i of ideas) {
-    const tr = el("tr"); const ev = el("td");
-    for (const e of (i.evidence || []).slice(0, 3)) { if (e.url) { const a = el("a", "", e.source); a.href = e.url; a.target = "_blank"; a.rel = "noopener"; a.title = e.title; ev.append(a, document.createTextNode(" ")); } else ev.append(document.createTextNode(`${e.source} `)); }
-    const name = el("td"); name.append(el("strong", "", i.title), el("br"), el("span", "muted-xs", i.problem));
-    tr.append(name, el("td", "", i.niche), el("td", "", i.type), el("td", "num", usd(i.price_usd, 0)), el("td", "num", String(i.score)), ev, el("td", `dec-${i.status}`, i.status));
+    const a = i.assessment || {}, tr = el("tr"); const ev = el("td");
+    for (const e of (i.evidence || []).slice(0, 3)) { if (e.url) { const l = el("a", "", e.source); l.href = e.url; l.target = "_blank"; l.rel = "noopener"; l.title = e.title; ev.append(l, document.createTextNode(" ")); } else ev.append(document.createTextNode(`${e.source} `)); }
+    const name = el("td"); name.append(el("strong", "", i.title), el("br"), el("span", "muted-xs", a.job_to_be_done || i.problem));
+    if (a.reasons && a.reasons.length && i.status === "rejected") name.append(el("br"), el("span", "muted-xs dec-rejected", a.reasons.join(" · ")));
+    const [ul, uc] = URG[a.urgency] || ["—", ""];
+    const ttv = el("td", `num ${a.ttv_minutes > 5 ? "dec-rejected" : ""}`, a.ttv_minutes ? `${a.ttv_minutes} min` : "—");
+    const moat = el("td", `num ${a.commodity ? "dec-rejected" : ""}`, a.commodity ? "commodity" : n(a.moat, 0));
+    const urg = el("td"); urg.append(el("span", `badge ${uc}`, ul));
+    tr.append(name, urg, el("td", "num", n(a.opportunity)), el("td", "num", n(a.wtp)),
+      ttv, moat, el("td", "num", n(a.distribution, 0)),
+      el("td", "num", a.value_month_low ? `${usd(a.value_month_low, 0)}–${usd(a.value_month_high, 0)}` : "—"),
+      el("td", "num", usd(i.price_usd, 0)), el("td", "num", n(i.score, 0)), ev, el("td", `dec-${i.status}`, i.status));
     t.append(tr);
   }
 }
