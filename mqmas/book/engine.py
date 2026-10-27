@@ -68,6 +68,11 @@ MAX_SIGNAL_LAG_MS = 4 * 3_600_000  # a daily signal is only actionable within 4h
 DAILY_BARS = 400
 SETUP_PREFIX = "book:"
 SCORE_TFS = ("4h", "1d")
+EVIDENCE = {
+    "confluence": "aprovado no walk-forward 2023-07→2026-10: PF 2,29, acerto 56%, DD 2,9%",
+    "classic": "zero parâmetros otimizados; 2022-07→2026-10 com taxas: 119 trades, acerto 46%, payoff 2,45, PF 2,11 "
+               "(2,02 com custo dobrado), maior perda 1,06R, 75% das janelas de 6 meses positivas",
+}
 
 
 @dataclass
@@ -220,7 +225,7 @@ class StrategyBook:
                                                if last["vol20"] else None,
                                                "rsi14": round(float(last["rsi14"]), 1),
                                                "atr_pct": round(float(last["atr"] / last["close"]) * 100, 2)},
-                                              self._ta(df, tf)))
+                                              self._ta(df, tf), evidence=EVIDENCE.get(c.family, EVIDENCE["confluence"])))
             self.state.last_eval[tf] = self._due(tf, now_ms) or self.state.last_eval.get(tf, 0)
         signals.sort(key=lambda x: x.rs, reverse=True)
         stale = [tf for tf in due if now_ms - self.state.last_eval.get(tf, 0) > min(TF_MS[tf] // 6, MAX_SIGNAL_LAG_MS)]
