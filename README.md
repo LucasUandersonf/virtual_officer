@@ -79,13 +79,14 @@ mq-mas/
 
 | Métrica | Implementação |
 |---|---|
-| **Z-Score(50)** | `(P − μ₅₀)/σ₅₀`, σ amostral (ddof=1). Entrada exige `z ≤ −2`. |
+| **Z-Score(50)** | `(P − μ₅₀)/σ₅₀`, σ amostral (ddof=1). Usado pelo setup de reversão e como contexto. |
 | **VWAP dinâmico** | Ancorado por dia UTC, preço típico, bandas de ±2σ ponderadas por volume. |
 | **Volume Profile** | O volume de cada candle é distribuído no intervalo [low, high]; o POC e a Value Area de 70% crescem a partir do POC. |
 | **Order Book** | Imbalance `(Vb−Va)/(Vb+Va)` nos 5 primeiros níveis, razão bid/ask, depth delta (Δ do imbalance) e microprice de Stoikov. |
 | **Regressão** | OLS de grau 1 ou 2, escolhido por AICc, nos últimos 48 candles de 15m. Intervalo de **predição** de 95% via t de Student: `ŷ ± t·s·√(1+x₀ᵀ(XᵀX)⁻¹x₀)`. |
-| **Stop** | `clamp(1,5·ATR%, 0,3%, 0,6%)`, nunca acima de 0,6%. |
-| **Take Profit** | Distância até a VWAP, limitada a [0,6%, 0,8%]. |
+| **Stop** | `clamp(k·ATR%, 0,3%, 0,6%)`, com k ∈ {1; 1,5; 2,5} escolhido por setup, nunca acima de 0,6%. |
+| **Take Profit** | Escolhido por setup no torneio, sempre dentro de [0,6%, 0,8%]. |
+| **Time stop** | 8h (`MAX_HOLD_MINUTES`), igual no backtest e na operação real. |
 | **Sizing** | `risco = min(¼·Kelly, 0,6%) × banca`; `notional = risco / (stop + 2·fee + slippage)` ≤ caixa. |
 
 **Os custos mudam o jogo.** Com a taxa padrão da Binance (0,1% por lado):
@@ -95,16 +96,18 @@ mq-mas/
 
 Por isso o notional fica em **~US$ 35** (e não US$ 50), para a perda máxima caber em US$ 0,30. O payoff fica em ~0,7:1, e o break-even exige **~59% de acerto** (68% com TP de 0,6%). A meta de 75% do mandato é coerente, mas é exigente: espere que o sistema **passe a maior parte do tempo sem operar**. Esse comportamento é intencional.
 
+**Liga de Setups (`mqmas/league/`).** Nove regras de entrada long-only (reversão, tendência, rompimento e fluxo) competem num torneio sobre ~2 anos de candles de 15m guardados no SQLite. O backtest é vetorizado: entrada na abertura do candle seguinte, stop antes do alvo quando ambos caem no mesmo candle, time stop, taxas e slippage. O walk-forward é ancorado em 5 segmentos: o perfil de saída é escolhido nos segmentos anteriores e o setup é avaliado no seguinte. A aprovação usa só os trades fora da amostra. O ranking roda a cada 24h, sem LLM, e só setups aprovados convocam o debate. Vários disparando juntos formam **confluência**.
+
 **Evidência estatística.** O p̂ é a média posterior de uma Beta(1+vitórias, 1+derrotas). Ela combina:
 
-1. um estudo de eventos walk-forward sobre ~41 dias de candles, com as mesmas regras de stop/TP e premissa pessimista (se stop e alvo caem no mesmo candle, conta o stop);
-2. os trades realizados no SQLite (paper e live).
+1. os trades fora da amostra do setup líder no torneio walk-forward;
+2. os trades realizados no SQLite (paper e live) com o mesmo setup.
 
 São exigidos n ≥ 20, p̂ ≥ 75%, Sharpe por trade ≥ 0,2 e Kelly > 0.
 
 ## 4. Travas rígidas (CRO em código)
 
-`spot_only` · `kill_switch` · `circuit_breaker` (2 stops seguidos no dia UTC → bloqueio de 24h; perda diária ≥ 1,5% → bloqueio até o fim do dia) · `single_position` · `fresh_data` · `zscore_oversold` · `below_vwap` · `structural_support` (Value Area) · `orderbook_pressure` · `spread` · `forecast_supports` · `sample_size` · `win_rate` · `trade_sharpe` · `kelly_positive` · `stop_bounds` · `tp_bounds` · `max_risk` · `min_notional` · `no_leverage`. Somam-se a elas a checagem de slippage ≤ 0,05% (Execução) e o preço limite ≤ mid·(1+0,05%).
+`spot_only` · `kill_switch` · `circuit_breaker` (2 stops seguidos no dia UTC → bloqueio de 24h; perda diária ≥ 1,5% → bloqueio até o fim do dia) · `single_position` · `fresh_data` · `setup_approved` (setup aprovado na Liga) · `league_fresh` (ranking com ≤ 48h) · `structural_support` (Value Area) · `orderbook_pressure` · `spread` · `forecast_supports` · `sample_size` · `win_rate` · `trade_sharpe` · `kelly_positive` · `stop_bounds` · `tp_bounds` · `max_risk` · `min_notional` · `no_leverage`. Somam-se a elas a checagem de slippage ≤ 0,05% (Execução) e o preço limite ≤ mid·(1+0,05%).
 
 **Proteção de queda mesmo se o processo cair:** após o fill, uma ordem **stop-limit nativa** fica pousada na corretora. O TP é gerido por software (contas spot não travam o mesmo BTC em duas ordens de venda sem OCO).
 

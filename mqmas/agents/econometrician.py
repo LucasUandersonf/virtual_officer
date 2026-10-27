@@ -7,7 +7,7 @@ from typing import Any
 from mqmas.agents.base import Agent, snapshot_brief
 from mqmas.config import Settings
 from mqmas.llm import prompts
-from mqmas.models import AgentMessage, AgentRole, EconometricianOpinion, QuantSnapshot, SetupStats, Vote
+from mqmas.models import AgentMessage, AgentRole, EconometricianOpinion, FiredSetup, QuantSnapshot, SetupStats, Vote
 
 
 class Econometrician(Agent):
@@ -29,17 +29,21 @@ class Econometrician(Agent):
         return not fails, fails
 
     async def deliberate(self, debate_id: str, snap: QuantSnapshot, stats: SetupStats,
-                         memory: list[dict[str, Any]], s: Settings) -> AgentMessage:
+                         memory: list[dict[str, Any]], s: Settings,
+                         lead: FiredSetup | None = None) -> AgentMessage:
         ok, fails = self.stats_pass(stats, s)
         data = stats.model_dump()
-        headline = (f"p̂={stats.win_rate:.1%} (IC95 inf {stats.win_rate_lower_95:.1%}), "
+        prefix = f"[{lead.name}] " if lead else ""
+        headline = (f"{prefix}p̂={stats.win_rate:.1%} (IC95 inf {stats.win_rate_lower_95:.1%}), "
                     f"n={stats.backtest_trades}+{stats.live_trades}, payoff {stats.payoff_ratio:.2f}, "
                     f"Sharpe/trade {stats.trade_sharpe:.2f}, Kelly {stats.kelly_full:.3f}.")
         if not ok:
             # No LLM call needed: the evidence already fails the mandate.
             return self.message(f"📉 {headline} Reprovo: " + "; ".join(fails) + ".",
                                 debate_id=debate_id, vote=Vote.REJECT, data=data)
-        res = await self.ask({"snapshot": snapshot_brief(snap), "estatisticas_setup": data,
+        league = {"setup_lider": lead.name, "metricas_fora_da_amostra": lead.oos.model_dump(),
+                  "perfil_saida": lead.profile.model_dump()} if lead else {}
+        res = await self.ask({"snapshot": snapshot_brief(snap), "estatisticas_setup": data, "liga": league,
                               "memoria_trades_recentes": memory[:10]}, EconometricianOpinion)
         if res is None:
             return self.abstain(debate_id)

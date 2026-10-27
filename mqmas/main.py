@@ -24,6 +24,7 @@ from mqmas.config import Settings, get_settings
 from mqmas.data.market_feed import MarketFeed, build_feed
 from mqmas.execution.broker import build_broker
 from mqmas.execution.position_manager import PositionManager
+from mqmas.league.service import SetupLeague
 from mqmas.llm.router import LLMRouter
 from mqmas.logging_setup import configure_logging
 from mqmas.persistence.db import Database
@@ -44,6 +45,7 @@ class Runtime:
     hub: WebSocketHub
     positions: PositionManager
     orchestrator: Orchestrator
+    league: SetupLeague
     stop: asyncio.Event
     tasks: list[asyncio.Task[None]]
 
@@ -76,13 +78,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     broker = build_broker(s, feed)
     positions = PositionManager(s, db, broker, feed, risk, hub)
     await positions.reconcile_on_boot()
-    orch = Orchestrator(s, db, feed, broker, router, risk, positions, hub)
+    league = SetupLeague(s, db, feed, hub)
+    await league.load_cached()
+    orch = Orchestrator(s, db, feed, broker, router, risk, positions, hub, league)
     stop = asyncio.Event()
     tasks = [
         asyncio.create_task(orch.run(stop), name="orchestrator"),
         asyncio.create_task(positions.run(stop), name="position_manager"),
+        asyncio.create_task(league.run(stop), name="setup_league"),
     ]
-    runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, stop, tasks)
+    runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, stop, tasks)
     try:
         yield
     finally:
@@ -137,6 +142,15 @@ async def trades(limit: int = 100) -> list[dict[str, Any]]:
 @app.get("/api/debates")
 async def debates(limit: int = 20) -> list[dict[str, Any]]:
     return await _rt().db.recent_debates(min(limit, 200))
+
+
+@app.get("/api/league")
+async def league_report() -> dict[str, Any]:
+    rt = _rt()
+    report = rt.league.report
+    return {"ready": report is not None, "running": rt.league.running, "age_hours": rt.league.age_hours(),
+            "report": report.model_dump(mode="json") if report else None,
+            "watching": [f.model_dump(mode="json") for f in rt.orchestrator.watching]}
 
 
 @app.post("/api/kill-switch")

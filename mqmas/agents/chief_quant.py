@@ -8,7 +8,7 @@ from typing import Any
 from mqmas.agents.base import Agent, snapshot_brief
 from mqmas.llm import prompts
 from mqmas.llm.router import LLMUnavailableError
-from mqmas.models import AgentMessage, AgentRole, ChiefQuantOpinion, QuantSnapshot, Vote
+from mqmas.models import AgentMessage, AgentRole, ChiefQuantOpinion, FiredSetup, QuantSnapshot, Vote
 
 
 def normalise(op: ChiefQuantOpinion) -> ChiefQuantOpinion:
@@ -18,14 +18,25 @@ def normalise(op: ChiefQuantOpinion) -> ChiefQuantOpinion:
     return op
 
 
+def setups_brief(fired: list[FiredSetup]) -> list[dict[str, Any]]:
+    """What the league knows about each fired setup, rounded to save tokens."""
+    return [{"setup": f.name, "familia": f.family, "tese": f.thesis,
+             "alvo_pct": round(f.profile.tp_pct * 100, 2), "stop_atr_x": f.profile.stop_atr_mult,
+             "oos_trades": f.oos.trades, "oos_acerto_pct": round(f.oos.win_rate * 100, 1),
+             "oos_expectativa_pct": round(f.oos.expectancy_pct * 100, 3),
+             "oos_profit_factor": round(f.oos.profit_factor, 2),
+             "oos_drawdown_pct": round(f.oos.max_drawdown_pct * 100, 2)} for f in fired]
+
+
 class ChiefQuant(Agent):
     role = AgentRole.CHIEF_QUANT
     system_prompt = prompts.CHIEF_QUANT
 
     async def deliberate(self, debate_id: str, snap: QuantSnapshot,
-                         recent_debates: list[dict[str, Any]]) -> tuple[ChiefQuantOpinion | None, AgentMessage]:
-        res = await self.ask({"snapshot": snapshot_brief(snap), "ultimos_debates": recent_debates[:5]},
-                             ChiefQuantOpinion)
+                         recent_debates: list[dict[str, Any]],
+                         fired: list[FiredSetup] | None = None) -> tuple[ChiefQuantOpinion | None, AgentMessage]:
+        res = await self.ask({"snapshot": snapshot_brief(snap), "setups_disparados": setups_brief(fired or []),
+                              "ultimos_debates": recent_debates[:5]}, ChiefQuantOpinion)
         if res is None:
             return None, self.abstain(debate_id)
         op, meta = res

@@ -221,3 +221,17 @@ a { color: var(--accent-2); } a:hover { color: #D6D0FF; }
   .debate-card { position: static; width: auto; margin: 12px 16px 0; }
   .dock { position: static; transform: none; margin: 12px 16px 16px; }
 }
+
+/* ------------------------------------------------------------------ setup league */
+.lg-note { margin: -6px 0 0; }
+.lg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.lg-list li.lg-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 8px; align-items: start; padding: 8px 10px; border-radius: 12px; background: var(--tile); border: 1px solid transparent; }
+.lg-list li.lg-row.ok { border-color: rgba(74, 222, 157, .45); }
+.lg-rank { font-size: 11px; color: var(--muted); text-align: center; }
+.lg-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lg-name strong { font-size: 13px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.lg-name span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-stats { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: 11px; }
+.lg-badge { padding: 1px 7px; border-radius: 6px; font-size: 10px; font-weight: 700; }
+.lg-badge.ok { background: rgba(74, 222, 157, .15); color: var(--good); }
+.lg-badge.no { background: rgba(255, 138, 128, .12); color: var(--bad); }

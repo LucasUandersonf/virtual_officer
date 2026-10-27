@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS risk_events (
     lock_until TEXT
 );
 
+CREATE TABLE IF NOT EXISTS candles (
+    symbol    TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    ts        INTEGER NOT NULL,
+    open      REAL NOT NULL,
+    high      REAL NOT NULL,
+    low       REAL NOT NULL,
+    close     REAL NOT NULL,
+    volume    REAL NOT NULL,
+    PRIMARY KEY (symbol, timeframe, ts)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -99,7 +111,14 @@ class Database:
         await self._conn.execute("PRAGMA busy_timeout=5000;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._conn.commit()
+
+    async def _migrate(self) -> None:
+        async with self.conn.execute("PRAGMA table_info(positions)") as cur:
+            cols = {r["name"] for r in await cur.fetchall()}
+        if "setup" not in cols:
+            await self.conn.execute("ALTER TABLE positions ADD COLUMN setup TEXT")
 
     async def close(self) -> None:
         if self._conn:
@@ -137,12 +156,12 @@ class Database:
     async def insert_position(self, p: Position) -> int:
         return await self._write(
             "INSERT INTO positions(debate_id, mode, symbol, status, quantity, entry_price, "
-            "stop_price, take_profit_price, opened_at, fees_usdt, entry_order_id, stop_order_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "stop_price, take_profit_price, opened_at, fees_usdt, entry_order_id, stop_order_id, setup) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 p.debate_id, p.mode, p.symbol, p.status.value, p.quantity, p.entry_price,
                 p.stop_price, p.take_profit_price, _iso(p.opened_at), p.fees_usdt,
-                p.entry_order_id, p.stop_order_id,
+                p.entry_order_id, p.stop_order_id, p.setup,
             ),
         )
 
@@ -171,6 +190,7 @@ class Database:
             exit_reason=ExitReason(r["exit_reason"]) if r["exit_reason"] else None,
             fees_usdt=r["fees_usdt"], pnl_usdt=r["pnl_usdt"],
             entry_order_id=r["entry_order_id"], stop_order_id=r["stop_order_id"],
+            setup=r["setup"],
         )
 
     async def active_positions(self, mode: str) -> list[Position]:
@@ -205,12 +225,15 @@ class Database:
             row = await cur.fetchone()
         return float(row["s"]) if row else 0.0
 
-    async def win_loss_counts(self, mode: str | None = None) -> tuple[int, int]:
+    async def win_loss_counts(self, mode: str | None = None, setup: str | None = None) -> tuple[int, int]:
         sql = "SELECT COUNT(*) AS n, SUM(CASE WHEN pnl_usdt > 0 THEN 1 ELSE 0 END) AS w FROM positions WHERE status='closed'"
         params: tuple[Any, ...] = ()
         if mode:
             sql += " AND mode=?"
-            params = (mode,)
+            params += (mode,)
+        if setup:
+            sql += " AND setup=?"
+            params += (setup,)
         async with self.conn.execute(sql, params) as cur:
             row = await cur.fetchone()
         return (int(row["n"] or 0), int(row["w"] or 0)) if row else (0, 0)
@@ -260,6 +283,36 @@ class Database:
             (mode, _iso(since)),
         ) as cur:
             return [self._row_to_position(r) for r in await cur.fetchall()]
+
+
+    # ------------------------------------------------------------------ candle history (Setup League)
+
+    async def last_candle_ts(self, symbol: str, timeframe: str) -> int | None:
+        async with self.conn.execute(
+            "SELECT MAX(ts) AS t FROM candles WHERE symbol=? AND timeframe=?", (symbol, timeframe)
+        ) as cur:
+            row = await cur.fetchone()
+        return int(row["t"]) if row and row["t"] is not None else None
+
+    async def save_candles(self, symbol: str, timeframe: str, rows: list[list[float]]) -> None:
+        async with self._lock:
+            await self.conn.executemany(
+                "INSERT OR REPLACE INTO candles(symbol, timeframe, ts, open, high, low, close, volume) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                [(symbol, timeframe, int(r[0]), *map(float, r[1:6])) for r in rows],
+            )
+            await self.conn.commit()
+
+    async def prune_candles(self, symbol: str, timeframe: str, before_ms: int) -> None:
+        await self._write("DELETE FROM candles WHERE symbol=? AND timeframe=? AND ts < ?",
+                          (symbol, timeframe, before_ms))
+
+    async def load_candles(self, symbol: str, timeframe: str) -> list[tuple[Any, ...]]:
+        async with self.conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM candles WHERE symbol=? AND timeframe=? ORDER BY ts",
+            (symbol, timeframe),
+        ) as cur:
+            return [tuple(r) for r in await cur.fetchall()]
 
 
 def start_of_utc_day(now: datetime | None = None) -> datetime:

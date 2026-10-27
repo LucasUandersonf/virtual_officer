@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     min_win_rate: float = Field(default=0.75, gt=0, lt=1)
     min_sample_size: int = Field(default=20, ge=5)
     min_trade_sharpe: float = 0.20
+
+    # --- Setup League (walk-forward tournament) -------------------------------------
+    league_history_days: int = Field(default=730, ge=60, le=2000)
+    league_refresh_hours: float = Field(default=24.0, ge=1)
+    league_folds: int = Field(default=5, ge=3, le=10)
+    league_min_profit_factor: float = Field(default=1.15, ge=1.0)
+    max_hold_minutes: int = Field(default=480, ge=30)  # time stop, identical in backtest and live
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 
     # --- Agent loop ---------------------------------------------------------------

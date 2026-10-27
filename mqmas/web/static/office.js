@@ -323,6 +323,42 @@ function addMinute(role, name, text, ts, vote) {
   while (list.children.length > 80) list.lastChild.remove();
 }
 
+// ===================================================================== setup league
+function renderLeague(report) {
+  const list = $("lg-list");
+  if (!report) return;
+  const ok = report.entries.filter((e) => e.approved).length;
+  const end = report.end ? new Date(report.end) : null;
+  const days = report.start && end ? Math.round((end - new Date(report.start)) / 86400000) : 0;
+  $("lg-sub").textContent = `${ok}/${report.entries.length} aprovados · ${days} dias de histórico`;
+  list.replaceChildren();
+  for (const e of report.entries) {
+    const li = el("li", `lg-row${e.approved ? " ok" : ""}`);
+    li.title = e.approved ? e.thesis : `${e.thesis}\nReprovado: ${e.reasons.join("; ")}`;
+    const name = el("div", "lg-name");
+    const title = el("strong", "", e.name);
+    title.append(el("span", `lg-badge ${e.approved ? "ok" : "no"}`, e.approved ? "ATIVO" : "REPROVADO"));
+    name.append(title,
+      el("span", "", `${e.family} · alvo ${(e.profile.tp_pct * 100).toFixed(1)}% · ${e.oos.trades} trades OOS`));
+    const pf = e.oos.profit_factor >= 99 ? "∞" : e.oos.profit_factor.toFixed(2);
+    const st = el("div", "lg-stats mono");
+    st.append(el("span", e.oos.expectancy_pct > 0 ? "pos" : "neg", `${pct(e.oos.expectancy_pct, 3)}/trade`),
+      el("span", "muted-xs", `acerto ${(e.oos.win_rate * 100).toFixed(0)}% · PF ${pf}`));
+    li.append(el("span", "lg-rank mono", `${e.rank}`), name, st);
+    list.append(li);
+  }
+}
+
+async function loadLeague() {
+  try {
+    const r = await fetch("/api/league");
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.report) renderLeague(data.report);
+    else setTimeout(loadLeague, 20000);
+  } catch (e) { setTimeout(loadLeague, 20000); }
+}
+
 // ===================================================================== websocket
 function handle(ev) {
   const p = ev.payload;
@@ -372,6 +408,8 @@ function handle(ev) {
       else if (p.event === "opened") addMinute(null, "Mesa", `Posição aberta: ${fmt(pos.quantity, 5)} BTC @ ${fmt(pos.entry_price)}`, ev.ts);
       break;
     }
+    case "league":
+      renderLeague(p); break;
     case "risk":
       if (p.event === "circuit_breaker") { $("pill-lock").hidden = false; addMinute(null, "Risco", `Circuit breaker armado até ${new Date(p.lock_until).toLocaleString("pt-BR")}`, ev.ts); }
       else if (p.event === "kill_switch") { setKill(p.engaged); addMinute(null, "Risco", p.engaged ? "Kill switch ACIONADO" : "Kill switch liberado", ev.ts); }
@@ -457,6 +495,7 @@ async function boot() {
     if (st.open_positions && st.open_positions.length) renderPosition(st.open_positions[0]);
   } catch (e) { console.warn("state unavailable", e); }
   connect();
+  loadLeague();
   setInterval(() => { tickTimer(); tickAge(); }, 1000);
 }
 boot();

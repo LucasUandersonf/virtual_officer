@@ -1,10 +1,10 @@
 """The firm's main loop: telemetry → (maybe) debate → unanimous consensus → order.
 
-Token economy matters on free LLM tiers (Groq's free tier allows roughly
-100k tokens/day on 70B models), so the expensive debate is convened only
-when the deterministic pre-screen sees a candidate (z ≤ ``zscore_precheck``).
-The rest of the time the office stays alive with rules-based status lines
-built from the live numbers, plus a periodic LLM market commentary.
+Token economy matters on free LLM tiers, so the expensive debate is convened
+only when a setup *approved by the Setup League* (walk-forward tournament
+over years of history) fires on a freshly closed candle. Several setups
+firing together are presented as confluence. The rest of the time the office
+stays alive with rules-based status lines plus a periodic LLM commentary.
 
 Debate protocol (short-circuits on the first veto, which also saves tokens):
 
@@ -29,11 +29,13 @@ from mqmas.config import Settings
 from mqmas.data.market_feed import MarketFeed
 from mqmas.execution.broker import Broker
 from mqmas.execution.position_manager import PositionManager
+from mqmas.league.service import SetupLeague
 from mqmas.llm.router import LLMRouter
 from mqmas.models import (
     AgentMessage,
     AgentRole,
     Decision,
+    FiredSetup,
     GateResult,
     QuantSnapshot,
     SetupStats,
@@ -41,9 +43,9 @@ from mqmas.models import (
     Vote,
 )
 from mqmas.persistence.db import Database
-from mqmas.quant.evidence import BacktestResult, compute_setup_stats, event_study
+from mqmas.quant.evidence import BacktestResult, compute_setup_stats
 from mqmas.quant.pipeline import QuantPipeline
-from mqmas.quant.sizing import build_sizing_plan, stop_pct_from_atr, take_profit_pct
+from mqmas.quant.sizing import build_sizing_plan
 from mqmas.risk.constraints import RiskManager
 from mqmas.ws.hub import WebSocketHub
 
@@ -55,7 +57,7 @@ SPEECH_PACING_SEC = 1.5  # lets the office render bubbles one after another
 class Orchestrator:
     def __init__(self, settings: Settings, db: Database, feed: MarketFeed, broker: Broker,
                  router: LLMRouter, risk: RiskManager, positions: PositionManager,
-                 hub: WebSocketHub) -> None:
+                 hub: WebSocketHub, league: SetupLeague | None = None) -> None:
         self._s = settings
         self._db = db
         self._feed = feed
@@ -69,7 +71,9 @@ class Orchestrator:
         self.econ = Econometrician(router)
         self.cro = ChiefRiskOfficer(router)
         self.execution = ExecutionSpecialist(router)
-        self._bt_cache: tuple[Any, BacktestResult] | None = None
+        self.league = league
+        self._last_signal_bar: Any = None
+        self.watching: list[FiredSetup] = []  # fired but not approved: shown, never traded
         self._last_debate = 0.0
         self._last_commentary = 0.0
         self._idle_turn = 0
@@ -89,21 +93,14 @@ class Orchestrator:
         await self._say(AgentMessage(debate_id=debate_id, role=AgentRole.SYSTEM, agent_name=p.name,
                                      text=text, provider="rules"), pace=False)
 
-    async def _backtest(self) -> BacktestResult:
-        df = self._feed.candles()
-        key = (len(df), df.index[-1])
-        if self._bt_cache and self._bt_cache[0] == key:
-            return self._bt_cache[1]
-        result = await asyncio.to_thread(event_study, df.iloc[:-1], self._s)  # closed candles only
-        self._bt_cache = (key, result)
-        return result
-
-    async def _evidence(self, snap: QuantSnapshot) -> tuple[SetupStats, SizingPlan]:
+    async def _evidence(self, snap: QuantSnapshot, lead: FiredSetup) -> tuple[SetupStats, SizingPlan]:
+        """Out-of-sample league trades + forward (paper/live) trades of the same setup."""
         s = self._s
-        stop_pct = stop_pct_from_atr(snap.atr_pct, s)
-        tp_pct = take_profit_pct(snap.price, snap.vwap, s)
-        n_live, w_live = await self._db.win_loss_counts()
-        stats = compute_setup_stats(await self._backtest(), n_live, w_live, stop_pct, tp_pct, s)
+        stop_pct = min(max(lead.profile.stop_atr_mult * snap.atr_pct, s.stop_loss_min_pct), s.stop_loss_max_pct)
+        tp_pct = lead.profile.tp_pct
+        n_live, w_live = await self._db.win_loss_counts(setup=lead.key)
+        oos = BacktestResult(trades=lead.oos.trades, wins=lead.oos.wins, net_returns=())
+        stats = compute_setup_stats(oos, n_live, w_live, stop_pct, tp_pct, s)
         equity = await self._risk.equity_estimate()
         plan = build_sizing_plan(equity, snap.orderbook.best_ask, stop_pct, tp_pct, stats.kelly_applied, s)
         return stats, plan
@@ -135,11 +132,11 @@ class Orchestrator:
 
         active = await self._db.active_positions(self._s.trading_mode.value)
         now = time.monotonic()
-        candidate = (snap.zscore <= self._s.zscore_precheck and not active and lock is None
-                     and now - self._last_debate >= self._s.debate_cooldown_sec)
-        if candidate:
+        fired = await self._new_signals(df)
+        approved = [f for f in fired if f.approved]
+        if approved and not active and lock is None and now - self._last_debate >= self._s.debate_cooldown_sec:
             self._last_debate = now
-            await self.debate(snap)
+            await self.debate(snap, approved)
             return
         if now - self._last_commentary >= self._s.commentary_interval_sec:
             self._last_commentary = now
@@ -148,12 +145,36 @@ class Orchestrator:
                 return
         await self._idle_chatter(snap, bool(active), lock is not None)
 
+    async def _new_signals(self, df: Any) -> list[FiredSetup]:
+        """Evaluate the league once per closed candle (no tokens, a few ms of CPU)."""
+        if self.league is None or len(df) < 2 or df.index[-2] == self._last_signal_bar:
+            return []
+        self._last_signal_bar = df.index[-2]
+        fired = await asyncio.to_thread(self.league.fired, df)
+        self.watching = [f for f in fired if not f.approved]
+        return fired
+
+    def _league_line(self) -> str:
+        report = self.league.report if self.league else None
+        if report is None:
+            return "Liga de Setups ainda montando o ranking com o histórico — sem setup aprovado, sem operação."
+        approved = report.approved
+        if not approved:
+            best = report.entries[0]
+            return (f"Liga: 0/{len(report.entries)} setups aprovados no walk-forward. Melhor: {best.name} "
+                    f"(acerto OOS {best.oos.win_rate:.0%}, {best.oos.expectancy_pct:+.3%}/trade). Mesa em espera.")
+        names = ", ".join(e.name for e in approved[:3])
+        return f"Liga: {len(approved)}/{len(report.entries)} setups aprovados ({names}). Vigiando cada candle de 15m."
+
     async def _idle_chatter(self, snap: QuantSnapshot, in_position: bool, locked: bool) -> None:
         """Deterministic status lines (zero tokens) so the office never goes quiet."""
         s, ob, fc = self._s, snap.orderbook, snap.forecast
         lines = [
-            (self.chief, f"Z-Score(50) em {snap.zscore:+.2f}; gatilho de debate em {s.zscore_precheck}. "
-                         f"Preço {'abaixo' if snap.price < snap.vwap else 'acima'} da VWAP ({snap.vwap:,.0f})."),
+            (self.chief, self._league_line() if self._idle_turn % 8 == 0 else
+                         (f"Observando {', '.join(w.name for w in self.watching)} — disparou, mas não é aprovado na Liga."
+                          if self.watching else
+                          f"Z-Score(50) em {snap.zscore:+.2f}. Preço {'abaixo' if snap.price < snap.vwap else 'acima'} "
+                          f"da VWAP ({snap.vwap:,.0f}).")),
             (self.econ, f"Regressão grau {fc.degree} (R² {fc.r_squared:.2f}) projeta {fc.expected_price:,.0f} "
                         f"em {fc.horizon} barras, IC95 [{fc.lower_95:,.0f}; {fc.upper_95:,.0f}]."),
             (self.cro, "Circuit breaker ATIVO — mesa bloqueada." if locked else
@@ -166,10 +187,16 @@ class Orchestrator:
         self._idle_turn += 1
         await self._hub.publish("agent_message", agent.message(text).model_dump(mode="json"))
 
-    async def debate(self, snap: QuantSnapshot) -> Decision:
+    async def debate(self, snap: QuantSnapshot, fired: list[FiredSetup] | None = None) -> Decision:
         debate_id = uuid.uuid4().hex[:12]
-        await self._hub.publish("debate_start", {"debate_id": debate_id, "zscore": snap.zscore, "price": snap.price})
-        await self._system(f"Reunião convocada: Z-Score {snap.zscore:+.2f} cruzou o pré-filtro.", debate_id)
+        fired = sorted(fired or [], key=lambda f: f.score, reverse=True)
+        lead = fired[0] if fired else None
+        confluence = [f.key for f in fired]
+        await self._hub.publish("debate_start", {"debate_id": debate_id, "zscore": snap.zscore, "price": snap.price,
+                                                 "setups": [f.name for f in fired]})
+        names = " + ".join(f.name for f in fired) or "nenhum setup"
+        await self._system(f"Reunião convocada: {names} disparou no candle fechado"
+                           + (f" — confluência de {len(fired)} setups." if len(fired) > 1 else "."), debate_id)
         votes: dict[str, Vote] = {}
         plan: SizingPlan | None = None
         stats: SetupStats | None = None
@@ -178,10 +205,17 @@ class Orchestrator:
 
         def outcome(reason: str) -> Decision:
             return Decision(debate_id=debate_id, approved=False, reason=reason, gates=gates,
-                            votes=votes, sizing=plan)
+                            votes=votes, sizing=plan, setup=lead.key if lead else None, confluence=confluence)
 
-        # 1. Chief Quant — Tree of Thoughts
-        _, msg = await self.chief.deliberate(debate_id, snap, await self._db.recent_debates(5))
+        if lead is None:
+            empty = outcome("Nenhum setup aprovado disparou")
+            self.last_decision = empty
+            await self._db.save_debate(empty, snap.model_dump_json())
+            await self._hub.publish("decision", empty.model_dump(mode="json"))
+            return empty
+
+        # 1. Chief Quant — Tree of Thoughts over the fired setups
+        _, msg = await self.chief.deliberate(debate_id, snap, await self._db.recent_debates(5), fired)
         votes[AgentRole.CHIEF_QUANT.value] = msg.vote or Vote.ABSTAIN
         await self._say(msg)
         decision: Decision | None = None
@@ -190,8 +224,8 @@ class Orchestrator:
 
         # 2. Econometrician — evidence + memory
         if decision is None:
-            stats, plan = await self._evidence(snap)
-            msg = await self.econ.deliberate(debate_id, snap, stats, await self._memory(), self._s)
+            stats, plan = await self._evidence(snap, lead)
+            msg = await self.econ.deliberate(debate_id, snap, stats, await self._memory(), self._s, lead)
             votes[AgentRole.ECONOMETRICIAN.value] = msg.vote or Vote.ABSTAIN
             await self._say(msg)
             if msg.vote is not Vote.APPROVE:
@@ -202,7 +236,8 @@ class Orchestrator:
             gates = await self._risk.evaluate_entry(
                 snap, stats, plan, feed_stale=self._feed.is_stale(),
                 min_notional=await self._broker.min_notional(),
-                available_cash=await self._broker.available_cash(plan.equity))
+                available_cash=await self._broker.available_cash(plan.equity),
+                setup=lead, league_age_hours=self.league.age_hours() if self.league else None)
             msg = await self.cro.deliberate(debate_id, snap, plan, gates)
             votes[AgentRole.CRO.value] = msg.vote or Vote.ABSTAIN
             await self._say(msg)
@@ -222,7 +257,7 @@ class Orchestrator:
             unanimous = len(votes) == 4 and all(v is Vote.APPROVE for v in votes.values())
             decision = Decision(debate_id=debate_id, approved=unanimous,
                                 reason="Consenso unânime" if unanimous else "Sem unanimidade",
-                                gates=gates, votes=votes, sizing=plan)
+                                gates=gates, votes=votes, sizing=plan, setup=lead.key, confluence=confluence)
 
         self.last_decision = decision
         await self._db.save_debate(decision, snap.model_dump_json())
@@ -231,7 +266,7 @@ class Orchestrator:
                             else f"❌ Sem operação: {decision.reason}."), debate_id)
 
         if decision.approved and plan is not None and limit is not None:
-            position = await self._positions.open_position(debate_id, plan, limit)
+            position = await self._positions.open_position(debate_id, plan, limit, setup=lead.key)
             await self._system("Ordem executada e stop nativo armado." if position
                                else "Ordem não preenchida no prazo — cancelada sem exposição.", debate_id)
         return decision

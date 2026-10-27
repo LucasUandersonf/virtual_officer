@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from mqmas.config import Settings
-from mqmas.models import ExitReason, GateResult, QuantSnapshot, SetupStats, SizingPlan
+from mqmas.models import ExitReason, FiredSetup, GateResult, QuantSnapshot, SetupStats, SizingPlan
 from mqmas.persistence.db import Database, start_of_utc_day
 
 log = logging.getLogger(__name__)
@@ -83,6 +83,8 @@ class RiskManager:
         feed_stale: bool,
         min_notional: float,
         available_cash: float,
+        setup: FiredSetup | None,
+        league_age_hours: float | None,
     ) -> list[GateResult]:
         s = self._s
         g: list[GateResult] = []
@@ -100,10 +102,12 @@ class RiskManager:
              f"bloqueado até {lock.isoformat()}" if lock else "sem bloqueio ativo")
         gate("single_position", not active, f"{len(active)} posição(ões) aberta(s)")
         gate("fresh_data", not feed_stale, "feed de mercado " + ("DEFASADO" if feed_stale else "ok"))
-        gate("zscore_oversold", snap.zscore <= s.zscore_entry,
-             f"z={snap.zscore:.2f} (limiar {s.zscore_entry})")
-        gate("below_vwap", snap.price < snap.vwap,
-             f"preço {snap.price:.2f} vs VWAP {snap.vwap:.2f}")
+        gate("setup_approved", setup is not None and setup.approved,
+             f"{setup.name}: aprovado no torneio walk-forward (n OOS={setup.oos.trades})" if setup and setup.approved
+             else (f"{setup.name} NÃO aprovado na Liga" if setup else "nenhum setup disparou"))
+        fresh = league_age_hours is not None and league_age_hours <= 2 * s.league_refresh_hours
+        gate("league_fresh", fresh,
+             f"ranking com {league_age_hours:.1f}h" if league_age_hours is not None else "Liga ainda não rodou")
         vp = snap.volume_profile
         gate("structural_support", snap.price >= vp.value_area_low * (1 - s.stop_loss_max_pct / 2),
              f"VAL {vp.value_area_low:.2f} / POC {vp.poc:.2f}")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from mqmas.config import Settings
 from mqmas.data.market_feed import MarketFeed
@@ -37,7 +37,8 @@ class PositionManager:
     async def _publish(self, p: Position, event: str) -> None:
         await self._hub.publish("position", {"event": event, "position": p.model_dump(mode="json")})
 
-    async def open_position(self, debate_id: str, plan: SizingPlan, limit_price: float) -> Position | None:
+    async def open_position(self, debate_id: str, plan: SizingPlan, limit_price: float,
+                            setup: str | None = None) -> Position | None:
         async with self._lock:
             if await self._db.active_positions(self.mode):
                 log.warning("refusing entry: a position is already active")
@@ -47,7 +48,7 @@ class PositionManager:
                 return None
             p = Position(debate_id=debate_id, mode=self.mode, symbol=self._s.symbol,
                          status=PositionStatus.PENDING, quantity=qty, entry_price=limit_price,
-                         stop_price=plan.stop_price, take_profit_price=plan.take_profit_price)
+                         stop_price=plan.stop_price, take_profit_price=plan.take_profit_price, setup=setup)
             p.id = await self._db.insert_position(p)  # persisted *before* the order is sent
             try:
                 fill = await self._broker.buy_limit(qty, limit_price, self._s.entry_order_timeout_sec)
@@ -118,6 +119,9 @@ class PositionManager:
                 await self.close_position(p, ExitReason.STOP_LOSS, urgent=True)
             elif bid >= p.take_profit_price:
                 await self.close_position(p, ExitReason.TAKE_PROFIT, urgent=False)
+            elif datetime.now(timezone.utc) - p.opened_at >= timedelta(minutes=self._s.max_hold_minutes):
+                # Same time stop the Setup League backtest assumes; keeps live ≡ tested.
+                await self.close_position(p, ExitReason.TIME_STOP, urgent=False)
 
     async def reconcile_on_boot(self) -> None:
         """A PENDING row at boot means we crashed mid-entry: never assume a fill."""

@@ -102,17 +102,39 @@ Nenhum dos três pede cartão de crédito para o plano gratuito.
 
 > Os provedores trocam modelos com frequência (o Groq desativou o `llama-3.3-70b-versatile` em 16/08/2026). Se um modelo sair do ar, basta alterar `GROQ_MODEL`, `GEMINI_MODEL` ou `OPENROUTER_MODEL` no Railway; enquanto isso, o roteador usa o próximo provedor da fila.
 
-### 3.2 Por quanto tempo ficar em paper?
+### 3.2 A Liga de Setups: como o robô escolhe estratégias
+
+O robô não fica preso a uma estratégia só. Ele mantém uma **biblioteca de 9 setups** e os põe para competir num torneio com **2 anos de histórico** do BTC/USDT:
+
+| Família | Setups |
+|---|---|
+| Reversão | Reversão Z-Score · RSI-2 em tendência · Reentrada Bollinger · Capitulação com pavio · Divergência de RSI |
+| Tendência | Pullback na EMA20 |
+| Rompimento | Rompimento Donchian · Squeeze de Bollinger |
+| Fluxo | Recuperação da VWAP |
+
+**Como o torneio funciona** (roda sozinho a cada 24h, sem gastar IA, em menos de 1 segundo de CPU):
+
+1. Cada setup é testado com as **mesmas regras da operação real**: entrada na abertura do candle seguinte, alvo de 0,6–0,8%, stop de 0,3–0,6%, saída por tempo após 8h, taxas de 0,1% em cada ponta e derrapagem. Se o stop e o alvo caírem no mesmo candle, conta o stop.
+2. **Walk-forward:** o histórico é cortado em 5 partes. O melhor alvo e stop de cada setup é escolhido nas partes anteriores e o setup é avaliado na parte seguinte, **que ele nunca viu**. Só esse resultado "fora da amostra" decide a aprovação.
+3. **Aprovação** exige tudo isto: pelo menos 20 trades fora da amostra, lucro líquido médio > 0, profit factor ≥ 1,15, taxa de acerto ≥ 75% (o seu mandato) e resultado positivo em pelo menos metade das janelas de teste.
+4. Só setups **aprovados** convocam o debate. Quando dois ou mais disparam juntos, isso é apresentado aos agentes como **confluência**.
+5. No debate, o Chief Quant avalia se o regime atual (tendência ou lateral) combina com o setup. O Econometrista confere as estatísticas fora da amostra do setup somadas às operações em papel do mesmo setup. O CRO e a Execução mantêm as travas de sempre.
+
+O painel **Liga de Setups** mostra o ranking ao vivo. Setups reprovados aparecem com o motivo (passe o mouse). **Se nenhum setup for aprovado, o robô não opera.** Isso não é defeito: significa que nenhuma estratégia provou vantagem depois das taxas. Você pode afrouxar a meta de acerto (`MIN_WIN_RATE`, padrão 0,75), mas isso aumenta o risco. Decida olhando o relatório.
+
+### 3.3 Por quanto tempo ficar em paper?
 
 **Recomendação: no mínimo 4 a 8 semanas.** Motivos:
 
 - A trava `sample_size` exige pelo menos **20 operações** de evidência estatística. Os trades em paper contam como evidência.
 - A trava `win_rate` exige **taxa de acerto ≥ 75%**. Se o setup não atingir isso, o sistema simplesmente não opera, e isso é a proteção funcionando.
 
-### 3.3 Critérios para passar para dinheiro real
+### 3.4 Critérios para passar para dinheiro real
 
 Só avance quando **todos** forem verdadeiros:
 
+- [ ] Pelo menos 1 setup **aprovado** na Liga (`/api/league`)
 - [ ] Pelo menos 20 trades fechados em paper (`/api/trades`)
 - [ ] Taxa de acerto real ≥ 75% nesses trades
 - [ ] Resultado acumulado positivo (`/api/state` → `equity` > 50)
@@ -217,6 +239,7 @@ Salve. Depois do redeploy:
 | `/api/state` | Banca, trades, bloqueios, posição aberta |
 | `/api/trades` | Histórico de trades fechados |
 | `/api/debates` | Histórico de debates |
+| `/api/league` | Ranking completo da Liga de Setups (estatísticas fora da amostra de cada setup) |
 
 ### 7.3 Botão de emergência (kill switch)
 

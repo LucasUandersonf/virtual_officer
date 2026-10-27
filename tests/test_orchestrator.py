@@ -12,10 +12,13 @@ from mqmas.execution.broker import PaperBroker
 from mqmas.execution.position_manager import PositionManager
 from mqmas.llm.router import LLMRouter, ProviderConfig
 from mqmas.models import (
+    ExitProfile,
+    FiredSetup,
     Forecast,
     OrderBookMetrics,
     PositionStatus,
     QuantSnapshot,
+    SetupMetrics,
     SetupStats,
     VolumeProfile,
 )
@@ -76,6 +79,20 @@ def snapshot() -> QuantSnapshot:
     )
 
 
+class StubLeague:
+    report = None
+
+    def age_hours(self) -> float:
+        return 1.0
+
+
+def fired_setup(approved: bool = True) -> FiredSetup:
+    return FiredSetup(key="rsi2_dip", name="RSI-2 em tendência", family="reversão", thesis="recuo na alta",
+                      profile=ExitProfile(tp_pct=0.008, stop_atr_mult=1.5),
+                      oos=SetupMetrics(trades=40, wins=33, win_rate=0.8), score=3.0, approved=approved,
+                      bar_ts=snapshot().ts)
+
+
 @pytest.mark.asyncio
 async def test_unanimous_debate_opens_and_breaker_trips(settings, monkeypatch):
     db = Database(settings.db_path)
@@ -86,25 +103,26 @@ async def test_unanimous_debate_opens_and_breaker_trips(settings, monkeypatch):
     pm = PositionManager(settings, db, broker, feed, risk, hub)  # type: ignore[arg-type]
     router = LLMRouter([ProviderConfig("groq", "https://groq.test", "k", "m")],
                        client=httpx.AsyncClient(transport=httpx.MockTransport(llm_handler)))
-    orch = Orchestrator(settings, db, feed, broker, router, risk, pm, hub)  # type: ignore[arg-type]
+    orch = Orchestrator(settings, db, feed, broker, router, risk, pm, hub, StubLeague())  # type: ignore[arg-type]
     monkeypatch.setattr("mqmas.agents.orchestrator.SPEECH_PACING_SEC", 0)
 
     stats = SetupStats(backtest_trades=40, backtest_wins=33, live_trades=0, live_wins=0, win_rate=0.80,
                        win_rate_lower_95=0.66, payoff_ratio=0.7, expected_return_pct=0.003, trade_sharpe=0.5,
                        kelly_full=0.5, kelly_applied=0.125)
 
-    async def fake_evidence(snap):
+    async def fake_evidence(snap, lead):
         return stats, build_sizing_plan(50.0, snap.orderbook.best_ask, 0.006, 0.008, stats.kelly_applied, settings)
 
     monkeypatch.setattr(orch, "_evidence", fake_evidence)
 
     for _ in range(2):
         feed.price = PRICE
-        decision = await orch.debate(snapshot())
+        decision = await orch.debate(snapshot(), [fired_setup()])
         assert decision.approved, decision
+        assert decision.setup == "rsi2_dip"
         assert all(g.passed for g in decision.gates)
         [pos] = await db.active_positions("paper")
-        assert pos.status is PositionStatus.OPEN
+        assert pos.status is PositionStatus.OPEN and pos.setup == "rsi2_dip"
         assert pos.quantity * pos.entry_price <= 50.0
         feed.price = pos.stop_price - 5  # crash through the stop
         await pm.supervise_once()
@@ -116,8 +134,37 @@ async def test_unanimous_debate_opens_and_breaker_trips(settings, monkeypatch):
     assert await risk.lock_until() is not None  # 2 consecutive stops → 24h lockout
 
     feed.price = PRICE
-    blocked = await orch.debate(snapshot())
+    blocked = await orch.debate(snapshot(), [fired_setup()])
     assert not blocked.approved
     assert any(g.name == "circuit_breaker" and not g.passed for g in blocked.gates)
+    await router.aclose()
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_unapproved_setup_is_vetoed_by_gate(settings, monkeypatch):
+    db = Database(settings.db_path)
+    await db.connect()
+    hub, feed = WebSocketHub(), FakeFeed()
+    risk = RiskManager(settings, db)
+    broker = PaperBroker(settings, feed)  # type: ignore[arg-type]
+    pm = PositionManager(settings, db, broker, feed, risk, hub)  # type: ignore[arg-type]
+    router = LLMRouter([ProviderConfig("groq", "https://groq.test", "k", "m")],
+                       client=httpx.AsyncClient(transport=httpx.MockTransport(llm_handler)))
+    orch = Orchestrator(settings, db, feed, broker, router, risk, pm, hub, StubLeague())  # type: ignore[arg-type]
+    monkeypatch.setattr("mqmas.agents.orchestrator.SPEECH_PACING_SEC", 0)
+    stats = SetupStats(backtest_trades=40, backtest_wins=33, live_trades=0, live_wins=0, win_rate=0.80,
+                       win_rate_lower_95=0.66, payoff_ratio=0.7, expected_return_pct=0.003, trade_sharpe=0.5,
+                       kelly_full=0.5, kelly_applied=0.125)
+
+    async def fake_evidence(snap, lead):
+        return stats, build_sizing_plan(50.0, snap.orderbook.best_ask, 0.006, 0.008, stats.kelly_applied, settings)
+
+    monkeypatch.setattr(orch, "_evidence", fake_evidence)
+    decision = await orch.debate(snapshot(), [fired_setup(approved=False)])
+    assert not decision.approved
+    assert any(g.name == "setup_approved" and not g.passed for g in decision.gates)
+    assert not (await orch.debate(snapshot(), [])).approved
+    assert not await db.active_positions("paper")
     await router.aclose()
     await db.close()

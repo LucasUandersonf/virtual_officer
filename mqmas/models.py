@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def utcnow() -> datetime:
@@ -77,6 +77,76 @@ class SetupStats(BaseModel):
     trade_sharpe: float
     kelly_full: float
     kelly_applied: float
+
+
+class ExitProfile(BaseModel):
+    """Bracket exit inside the mandate: TP in [0.6%, 0.8%], ATR stop clamped to [0.3%, 0.6%]."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tp_pct: float
+    stop_atr_mult: float
+
+
+class SetupMetrics(BaseModel):
+    """Per-trade statistics, net of fees and slippage, in fractions of notional."""
+
+    trades: int = 0
+    wins: int = 0
+    win_rate: float = Field(default=0.5, description="Beta(1+w, 1+l) posterior mean")
+    win_rate_lower_95: float = 0.0
+    expectancy_pct: float = 0.0
+    profit_factor: float = 0.0
+    max_drawdown_pct: float = 0.0
+    sharpe: float = 0.0
+    total_return_pct: float = 0.0
+    p_edge: float = Field(default=0.0, description="P(win rate > break-even) under the posterior")
+
+
+class LeagueEntry(BaseModel):
+    key: str
+    name: str
+    family: str
+    thesis: str
+    profile: ExitProfile
+    oos: SetupMetrics = Field(description="Walk-forward out-of-sample: the number that matters")
+    in_sample: SetupMetrics
+    folds: list[float] = Field(default_factory=list, description="OOS net return per test fold")
+    approved: bool = False
+    reasons: list[str] = Field(default_factory=list)
+    score: float = 0.0
+    rank: int = 0
+    last_signal: datetime | None = None
+
+
+class LeagueReport(BaseModel):
+    generated_at: datetime = Field(default_factory=utcnow)
+    symbol: str
+    timeframe: str
+    bars: int
+    start: datetime | None = None
+    end: datetime | None = None
+    folds: int
+    max_hold_bars: int
+    entries: list[LeagueEntry]
+
+    @property
+    def approved(self) -> list[LeagueEntry]:
+        return [e for e in self.entries if e.approved]
+
+
+class FiredSetup(BaseModel):
+    """A setup whose entry rule fired on the last closed candle."""
+
+    key: str
+    name: str
+    family: str
+    thesis: str
+    profile: ExitProfile
+    oos: SetupMetrics
+    score: float
+    approved: bool
+    bar_ts: datetime
 
 
 class SizingPlan(BaseModel):
@@ -171,6 +241,8 @@ class Decision(BaseModel):
     gates: list[GateResult]
     votes: dict[str, Vote]
     sizing: SizingPlan | None = None
+    setup: str | None = None
+    confluence: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- trading
@@ -188,6 +260,7 @@ class ExitReason(str, Enum):
     STOP_LOSS = "stop_loss"
     MANUAL = "manual"
     ENTRY_TIMEOUT = "entry_timeout"
+    TIME_STOP = "time_stop"
 
 
 class Position(BaseModel):
@@ -208,13 +281,15 @@ class Position(BaseModel):
     pnl_usdt: float | None = None
     entry_order_id: str | None = None
     stop_order_id: str | None = None
+    setup: str | None = None
 
 
 # --------------------------------------------------------------------------- websocket
 
 
 EventType = Literal[
-    "hello", "telemetry", "agent_message", "debate_start", "decision", "position", "risk", "system"
+    "hello", "telemetry", "agent_message", "debate_start", "decision", "position", "risk", "system",
+    "league",
 ]
 
 
