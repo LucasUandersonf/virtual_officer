@@ -364,6 +364,15 @@ async def ta_study_report() -> dict[str, Any]:
                                                          "operacao")} for r in rep["rows"]]}
 
 
+@app.get("/api/research/tcc")
+async def research_tcc() -> dict[str, Any]:
+    """The four models of Prates (2021) on Binance, in the thesis' report format."""
+    path = _research_root(_rt().settings) / "tcc_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.get("/api/research/season")
 async def research_season() -> dict[str, Any]:
     path = _research_root(_rt().settings) / "season_report.json"

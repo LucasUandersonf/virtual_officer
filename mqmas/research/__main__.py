@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|all]``.
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -118,6 +118,16 @@ def main() -> None:
             for line in classic_study.summarize(rep):
                 log.info(line)
             log.info("classic report saved to %s", path)
+    if which in ("tcc", "all"):
+        from mqmas.research import tcc
+
+        path = root / "tcc_report.json"
+        if which == "tcc" or not _current(path, tcc.VERSION):
+            rep = tcc.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in tcc.summarize(rep):
+                log.info(line)
+            log.info("tcc report saved to %s", path)
 
 
 if __name__ == "__main__":
