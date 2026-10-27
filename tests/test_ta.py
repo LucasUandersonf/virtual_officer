@@ -81,3 +81,27 @@ def test_report_is_complete_and_json_friendly():
     assert set(rep) >= {"tendencia", "momento", "volatilidade", "volume", "estrutura", "padroes_recentes", "confluencia"}
     ev, _, _ = all_events(df)
     assert ev.dtypes.eq(bool).all() and len(ev.columns) > 60
+
+
+def test_worklist_has_all_100_patterns_with_a_bias():
+    from mqmas.ta.signals import is_bear, is_bull
+
+    rng = np.random.default_rng(9)
+    c = 100 * np.exp(np.cumsum(rng.normal(0, 0.012, 900)))
+    o = np.r_[c[0], c[:-1]]
+    df = pd.DataFrame({"open": o, "high": np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.006, 900))),
+                       "low": np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.006, 900))), "close": c,
+                       "volume": rng.gamma(2, 50, 900)},
+                      index=pd.date_range("2024-01-01", periods=900, freq="4h", tz="UTC"))
+    ev, _, _ = all_events(df)
+    wl = [k for k in ev.columns if k[:1].isdigit()]
+    assert len(wl) == 100 and wl[0].startswith("01_") and wl[-1].startswith("100_")
+    assert all(is_bull(k) != is_bear(k) for k in wl)
+    assert is_bear("35_FIBO_1618_Extension_Target") and is_bull("50_FIBO_1618_Bearish_Extension")
+
+
+def test_closed_out_in_bull_rule():
+    rows = [(100, 100.5, 99.5, 100.0 + 0.05 * ((-1) ** k)) for k in range(30)]
+    rows += [(97.0, 97.1, 95.0, 95.2), (95.3, 99.5, 95.1, 99.4)]  # whole candle below the band, then back inside
+    ev, _, _ = all_events(frame(rows))
+    assert ev["07_BB_Closed_Out_In_Bull"].iloc[-1]

@@ -28,11 +28,11 @@ from mqmas.research.lab import FIRST_TEST
 from mqmas.research.seasonality import load_cached, split_stats
 from mqmas.research.swing import resample
 from mqmas.research.templates import Plan, structured_trades
-from mqmas.ta.signals import BEAR, BULL, CATEGORY, all_events
+from mqmas.ta.signals import all_events, category, is_bear, is_bull
 
 log = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2
 HORIZONS = {"4h": (1, 3, 6, 12), "1d": (1, 3, 5, 10)}
 HOLD = {"4h": 12, "1d": 10}
 HEADLINE = {"4h": 6, "1d": 5}  # horizon used for the verdict: 1 day on 4h bars, 1 week on daily bars
@@ -77,11 +77,11 @@ def run(root: Path) -> dict[str, Any]:
                 mask = ev[name].to_numpy() & warm
                 if not mask.any():
                     continue
-                sign = -1.0 if name in BEAR else 1.0
+                sign = -1.0 if is_bear(name) else 1.0
                 for k in HORIZONS[tf]:
                     store.setdefault((name, f"{tf}|{k}"), []).append(sign * (fwd[k][mask] - base[k]))
                 counts[(name, tf)] = counts.get((name, tf), 0) + int(mask.sum())
-                if name in BULL:
+                if is_bull(name):
                     idx = np.flatnonzero(mask)
                     t = structured_trades(o, hi, lo, cl, a, Plan(idx, np.full(idx.size, np.nan), target_r=2.0,
                                                                  stop_atr=1.5, hold=HOLD[tf]), costs)
@@ -112,10 +112,10 @@ def run(root: Path) -> dict[str, Any]:
                 trade = {"trades": int(allr.size), "win_rate": round(float((allr > 0).mean()), 3),
                          "expectancy_pct": round(float(allr.mean()) * 100, 3), "pf": round(_pf(allr), 2),
                          "pf_p1": round(_pf(r1), 2), "pf_p2": round(_pf(r2), 2)}
-            bull = name in BULL
+            bull = is_bull(name)
             verdict = _verdict(head, trade, bull)
-            row = {"padrao": name, "tf": tf, "categoria": CATEGORY.get(name, "padrão gráfico"),
-                   "vies": "alta" if bull else ("baixa" if name in BEAR else "neutro"), "ocorrencias": counts[(name, tf)],
+            row = {"padrao": name, "tf": tf, "categoria": category(name),
+                   "vies": "alta" if bull else ("baixa" if is_bear(name) else "neutro"), "ocorrencias": counts[(name, tf)],
                    "horizontes": per_h, "operacao": trade, "veredito": verdict}
             rows.append(row)
             events.setdefault(name, {})[tf] = {

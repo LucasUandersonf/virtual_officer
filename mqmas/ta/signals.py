@@ -17,6 +17,7 @@ import pandas as pd
 from mqmas.ta.candles import BEARISH, BULLISH, NEUTRAL, candle_patterns
 from mqmas.ta.indicators import all_indicators, volume_profile
 from mqmas.ta.structure import BEARISH_STRUCT, BULLISH_STRUCT, structure_events
+from mqmas.ta.worklist import worklist, worklist_bias
 
 RECENT_BARS = 3
 
@@ -81,10 +82,23 @@ CATEGORY = {**{k: "candle" for k in BULLISH + BEARISH + NEUTRAL},
             **{k: "indicador" for k in IND_BULLISH + IND_BEARISH}}
 
 
+def is_bull(name: str) -> bool:
+    return name in BULL or (name[:1].isdigit() and worklist_bias(name) == "alta")
+
+
+def is_bear(name: str) -> bool:
+    return name in BEAR or (name[:1].isdigit() and worklist_bias(name) == "baixa")
+
+
+def category(name: str) -> str:
+    return "worklist do time" if name[:1].isdigit() else CATEGORY.get(name, "padrão gráfico")
+
+
 def all_events(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, Any]:
     f = all_indicators(df)
+    cp = candle_patterns(df)
     struct, state = structure_events(df)
-    ev = pd.concat([candle_patterns(df), struct, indicator_events(df, f)], axis=1)
+    ev = pd.concat([cp, struct, indicator_events(df, f), worklist(df, f, cp, struct)], axis=1)
     return ev, f, state
 
 
@@ -114,15 +128,15 @@ def analyze(df: pd.DataFrame, study: dict[str, Any] | None = None) -> dict[str, 
     perf = (study or {}).get("events", {})
 
     def describe(k: str) -> dict[str, Any]:
-        item: dict[str, Any] = {"padrao": k, "categoria": CATEGORY.get(k, "padrão gráfico"),
-                                "vies": "alta" if k in BULL else ("baixa" if k in BEAR else "neutro")}
+        item: dict[str, Any] = {"padrao": k, "categoria": category(k),
+                                "vies": "alta" if is_bull(k) else ("baixa" if is_bear(k) else "neutro")}
         if k in perf:
             item["historico"] = perf[k]
         return item
 
-    bull = [describe(k) for k in found if k in BULL]
-    bear = [describe(k) for k in found if k in BEAR]
-    neutral = [describe(k) for k in found if k not in BULL and k not in BEAR]
+    bull = [describe(k) for k in found if is_bull(k)]
+    bear = [describe(k) for k in found if is_bear(k)]
+    neutral = [describe(k) for k in found if not is_bull(k) and not is_bear(k)]
     vp = volume_profile(df.iloc[-120:])
     near = [z for z in state.zones if abs((z["de"] + z["ate"]) / 2 / c - 1) < 0.05]
     return {
