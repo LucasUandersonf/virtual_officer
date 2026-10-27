@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     league_folds: int = Field(default=5, ge=3, le=10)
     league_min_profit_factor: float = Field(default=1.15, ge=1.0)
     max_hold_minutes: int = Field(default=480, ge=30)  # time stop, identical in backtest and live
+    research_on_boot: bool = False  # run the multi-asset research lab once (subprocess) if no report exists
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 
     # --- Agent loop ---------------------------------------------------------------

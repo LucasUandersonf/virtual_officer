@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -88,6 +90,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(league.run(stop), name="setup_league"),
     ]
     runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, stop, tasks)
+    if s.research_on_boot:
+        tasks.append(asyncio.create_task(_research_once(s), name="research_lab"))
     try:
         yield
     finally:
@@ -100,6 +104,24 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await db.close()
         runtime = None
         log.info("shutdown complete")
+
+
+def _research_root(s: Settings) -> Path:
+    return s.db_path.parent / "research"
+
+
+async def _research_once(s: Settings) -> None:
+    """Spawn the research lab in its own process (keeps the trading loop's GIL free)."""
+    from mqmas.research.lab import VERSION
+
+    report = _research_root(s) / "report.json"
+    if report.exists() and json.loads(report.read_text()).get("version") == VERSION:
+        log.info("research report v%s already present; skipping", VERSION)
+        return
+    log.info("starting research lab subprocess")
+    proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "mqmas.research", str(_research_root(s)))
+    code = await proc.wait()
+    log.info("research lab finished with exit code %s", code)
 
 
 app = FastAPI(title="MQ-MAS", version="1.0.0", lifespan=lifespan)
@@ -151,6 +173,17 @@ async def league_report() -> dict[str, Any]:
     return {"ready": report is not None, "running": rt.league.running, "age_hours": rt.league.age_hours(),
             "report": report.model_dump(mode="json") if report else None,
             "watching": [f.model_dump(mode="json") for f in rt.orchestrator.watching]}
+
+
+@app.get("/api/research")
+async def research_report() -> dict[str, Any]:
+    from mqmas.research.lab import summarize
+
+    path = _research_root(_rt().settings) / "report.json"
+    if not path.exists():
+        return {"ready": False}
+    report = json.loads(path.read_text())
+    return {"ready": True, "summary": summarize(report), "report": report}
 
 
 @app.post("/api/kill-switch")
