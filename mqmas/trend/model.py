@@ -166,3 +166,41 @@ def weights_frame(daily: dict[str, pd.DataFrame], params: TrendParams) -> tuple[
     covs = daily_cov(closes)
     rows = [target_weights(sig.loc[d], vol.loc[d], elig.loc[d], covs.get(d), params) for d in closes.index]
     return pd.DataFrame(rows, index=closes.index), sig
+
+
+# ---------------------------------------------------------------------------------------------- wave hunter
+
+MOM_TOP_N = 30  # universe of the wave hunter
+MOM_K = 5  # coins held
+MOM_LOOKBACK = 21  # 3 weeks, the middle of Liu-Tsyvinski-Wu's 1–4 week range
+MOM_BTC_SMA = 100  # in USDT while BTC closes under its 100-day average
+
+
+def momentum_frame(daily: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Wave hunter: every Monday close, the 5 coins with the best 3-week return, equal weight, while BTC is
+    above its 100-day average (else all USDT). Returns the daily target weights and the momentum score.
+
+    Validated in ``mqmas.research.waves`` (Binance 2020-01→2026-10, costs included): CAGR +135 %, max drawdown
+    67 %, Sharpe 1.57; +92 % without its three best coins. A high-volatility sleeve, not a whole portfolio.
+    """
+    closes = pd.DataFrame({s: d["close"] for s, d in daily.items()}).sort_index()
+    elig = eligibility(daily, MOM_TOP_N)
+    score = closes / closes.shift(MOM_LOOKBACK) - 1
+    btc = closes["BTC/USDT"]
+    regime = btc > btc.rolling(MOM_BTC_SMA).mean()
+    return weekly_top(closes, elig, score, regime, MOM_K), score
+
+
+def weekly_top(closes: pd.DataFrame, elig: pd.DataFrame, score: pd.DataFrame, regime: pd.Series | None,
+               k: int) -> pd.DataFrame:
+    """Equal-weight top-``k`` by ``score`` on each Monday close (only positive scores), held until next Monday."""
+    w = pd.DataFrame(np.nan, index=closes.index, columns=closes.columns)
+    for day in closes.index[closes.index.dayofweek == 0]:
+        row = pd.Series(0.0, index=closes.columns)
+        if regime is None or bool(regime.get(day, False)):
+            sc = score.loc[day].where(elig.loc[day]).dropna()
+            top = sc[sc > 0].sort_values(ascending=False).index[:k]
+            if len(top):
+                row[top] = 1.0 / len(top)
+        w.loc[day] = row
+    return w.ffill().fillna(0.0)

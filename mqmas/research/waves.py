@@ -31,12 +31,12 @@ import numpy as np
 import pandas as pd
 
 from mqmas.research.engine import Costs
-from mqmas.research.trend_study import COMPARABLE_START, TrendStudy, by_year, curve_metrics
-from mqmas.trend.model import MIN_HISTORY, TrendParams, eligibility, weights_frame
+from mqmas.research.trend_study import COMPARABLE_START, IDEAL_EQUITY, TrendStudy, by_year, curve_metrics, simulate, summary
+from mqmas.trend.model import MIN_HISTORY, TrendParams, eligibility, momentum_frame, weekly_top, weights_frame
 
 log = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 3
 THRESHOLDS = (0.10, 0.20, 0.30, -0.10)
 HORIZONS = (1, 5, 10, 20)
 UNIVERSE = 30
@@ -76,18 +76,7 @@ def event_study(closes: pd.DataFrame, elig: pd.DataFrame, start: pd.Timestamp, c
 
 def weekly_weights(closes: pd.DataFrame, elig: pd.DataFrame, score: pd.DataFrame,
                    regime: pd.Series | None = None) -> pd.DataFrame:
-    """Equal-weight top-K by ``score`` on each Monday close, held until the next Monday."""
-    w = pd.DataFrame(np.nan, index=closes.index, columns=closes.columns)
-    for day in closes.index[closes.index.dayofweek == 0]:
-        row = pd.Series(0.0, index=closes.columns)
-        if regime is None or bool(regime.get(day, False)):
-            s = score.loc[day].where(elig.loc[day]).dropna()
-            s = s[s > 0]  # long only: never buy a coin whose own score is negative
-            top = s.sort_values(ascending=False).index[:TOP_K]
-            if len(top):
-                row[top] = 1.0 / len(top)
-        w.loc[day] = row
-    return w.ffill().fillna(0.0)
+    return weekly_top(closes, elig, score, regime, TOP_K)
 
 
 def run_weights(closes: pd.DataFrame, w: pd.DataFrame, start: pd.Timestamp, costs: Costs) -> pd.Series:
@@ -189,6 +178,15 @@ def run(root: Path, ex: Any = None, daily: dict[str, pd.DataFrame] | None = None
             row[per] = m
         row["captura_de_ondas"] = wave_capture(closes, elig, w, start)
         rep["estrategias"][name] = row
+    # the live desks, simulated as the real account trades (US$ 5 minimum, 25 % band, 6-ATR disaster stop)
+    w_mom, s_mom = momentum_frame(daily)
+    _, s_trend = weights_frame(daily, TrendParams(vol_target=0.60, top_n=20, max_weight=0.35))
+    blend = (0.7 * w_waves.reindex(closes.index).fillna(0.0) + 0.3 * w_mom.reindex(closes.index).fillna(0.0))
+    rep["conta_real"] = {}
+    for name, w, sig in (("cacador_de_ondas", w_mom, s_mom), ("carteira_70tendencia_30ondas", blend, s_trend)):
+        rep["conta_real"][name] = {f"{lab}_{per}": summary(simulate(daily, w, sig, eq0, costs, s), eq0)
+                                   for lab, eq0 in (("US$120", 120.0), ("US$500", 500.0), ("ideal", IDEAL_EQUITY))
+                                   for per, s in (("completo", start), ("desde_2023_07", COMPARABLE_START))}
     rep["robustez"] = robustness(closes, strategies["momentum_3sem_top5_filtro_btc"].reindex(closes.index).fillna(0.0),
                                  strategies["tendencia_ondas_top20_vol60"].reindex(closes.index).fillna(0.0), start, costs)
     hold = (btc.loc[start:] / btc.loc[start:].iloc[0])
@@ -218,6 +216,12 @@ def summarize(rep: dict[str, Any]) -> list[str]:
         out.append(f"WAVES {name} captura: " + " | ".join(
             f"{k}: {v['dias']} dias, posicionado {v['posicionado_pct']:.0%}, contribuição {v['contribuicao']:+.2f}"
             for k, v in cap.items() if isinstance(v, dict)) + f" | contribuição total {cap['contribuicao_total']:+.2f}")
+    for name, rows in rep["conta_real"].items():
+        for lab, m in rows.items():
+            out.append(f"WAVES conta real {name} {lab}: CAGR {m['cagr']:+.1%} DD {m['max_drawdown']:.1%} "
+                       f"Sharpe {m['sharpe']:.2f} mês médio {m['monthly_mean']:+.2%} meses+ {m['positive_months']:.0%} "
+                       f"exposição {m['exposure']:.0%} viagens {m['round_trips']:.0f} taxas {m['fees_per_year_pct']:.2%}/ano"
+                       f" | anos {m['by_year']}")
     r = rep["robustez"]
     for name, v in r.items():
         if name == "maiores_contribuidores":
