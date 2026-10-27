@@ -158,9 +158,10 @@ def run(root: Path, ex: Any = None) -> dict[str, Any]:
                 ops, eq = backtest(df, buy, sell, costs, g)
                 entry: dict[str, Any] = {"medias": averages(ops, eq, df)}
                 if asset == "BTC/USDT" and label == "com custos":
+                    money = {"resultado": 2, "retorno_pct": 2, "saldo": 2, "rentabilidade_pct": 2}
                     entry["operacoes"] = [{**{k: v for k, v in r.items() if k not in ("entrada", "saida")},
                                            "entrada": str(r["entrada"].date()), "saida": str(r["saida"].date())}
-                                          for r in ops.round(2).to_dict("records")]
+                                          for r in ops.round(money).to_dict("records")]
                     entry["curva"] = eq.resample("W").last().round(2).reset_index().assign(
                         data=lambda x: x["data"].dt.strftime("%Y-%m-%d")).to_dict("records")
                 res.setdefault(model, {})[label] = entry
