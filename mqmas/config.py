@@ -96,12 +96,15 @@ class Settings(BaseSettings):
     # --- Strategy book (multi-coin, research-approved setups; paper only) -----------
     book_enabled: bool = True
     book_strategies: str = "confluence|1d|trigger=breakout,min_extra=2,rs_min=0.6|stop=2.5|tp=4.5|trail=None|hold=20"
-    book_risk_per_trade: float = Field(default=0.006, gt=0, le=0.015)
+    book_risk_per_trade: float = Field(default=0.006, gt=0, le=0.03)
     book_max_positions: int = Field(default=3, ge=1, le=5)
     book_pool_size: int = Field(default=40, ge=10, le=80)
     book_top_n: int = Field(default=15, ge=3, le=40)
     book_min_range: float = 0.025
     book_max_range: float = 0.15
+    book_heat_max: float = Field(default=0.06, gt=0, le=0.2)  # summed open risk of the book ≤ this × equity
+    book_dd_throttle: float = 0.10  # half risk below this drawdown from the equity peak
+    book_dd_severe: float = 0.20  # quarter risk below this one
     book_swing: bool = True  # swing book 1d/2d/3d (arena survivors, breakeven + trailing)
     book_live_enabled: bool = False  # second switch: real book orders need TRADING_MODE=live AND this
 

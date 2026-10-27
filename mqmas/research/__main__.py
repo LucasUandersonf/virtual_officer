@@ -1,5 +1,5 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|arena|talib|
-trend|waves|all]``.
+"""``python -m mqmas.research [root] <mode>``, mode in lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|
+livro|cross|arena|talib|aggr|trend|waves|all.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -189,6 +189,16 @@ def main() -> None:
             for line in waves.summarize(rep):
                 log.info(line)
             log.info("waves report saved to %s", path)
+    if which in ("aggr", "all"):
+        from mqmas.research import aggressive
+
+        path = root / "aggressive_report.json"
+        if which == "aggr" or not _current(path, aggressive.VERSION):
+            rep = aggressive.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in aggressive.summarize(rep):
+                log.info(line)
+            log.info("aggressive report saved to %s", path)
 
 
 if __name__ == "__main__":
