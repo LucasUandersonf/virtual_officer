@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|all]``.
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -128,6 +128,16 @@ def main() -> None:
             for line in tcc.summarize(rep):
                 log.info(line)
             log.info("tcc report saved to %s", path)
+    if which in ("livro", "all"):
+        from mqmas.research import livro
+
+        path = root / "livro_report.json"
+        if which == "livro" or not _current(path, livro.VERSION):
+            rep = livro.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in livro.summarize(rep):
+                log.info(line)
+            log.info("livro report saved to %s", path)
 
 
 if __name__ == "__main__":

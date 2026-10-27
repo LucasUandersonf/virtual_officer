@@ -1,0 +1,166 @@
+{
+  "gestao": {
+    "stop_inicial": "max(stop técnico, 1,5×ATR14), limitado a 3×ATR14 abaixo da entrada",
+    "breakeven": "máxima atinge entrada + 1R → stop = entrada + custos (0,30%)",
+    "trailing": "a partir de +2R: stop = max(stop, mínima das últimas 3 velas, máxima do trade − 2,5×ATR14); só sobe",
+    "alvo": "altura do padrão somada ao rompimento (padrões gráficos) ou sem alvo (trailing)",
+    "saidas_extras": "qualquer padrão de baixa do catálogo; sinal de venda do próprio modelo (TCC); tempo (40 velas no 1d, 90 no 4h)",
+    "execucao": "sinal no fechamento da vela; ordem na abertura da vela seguinte; custos 0,10% + 0,05% por lado"
+  },
+  "estrategias": [
+    {
+      "id": "tcc_medias",
+      "fonte": "Prates (2021)",
+      "nome": "Cruzamento de Médias",
+      "lado": "compra",
+      "entrada": "EMA20 cruza para cima a SMA50 no fechamento",
+      "saida_propria": "EMA20 cruza para baixo a SMA50",
+      "stop_tecnico": "mínima das últimas 5 velas",
+      "alvo": "sem alvo (trailing)",
+      "saida_propria_id": "tcc_medias_venda"
+    },
+    {
+      "id": "tcc_macd",
+      "fonte": "Prates (2021)",
+      "nome": "Cruzamento do MACD",
+      "lado": "compra",
+      "entrada": "MACD(12,26) cruza para cima a linha de sinal(9)",
+      "saida_propria": "MACD cruza para baixo o sinal",
+      "stop_tecnico": "mínima das últimas 5 velas",
+      "alvo": "sem alvo (trailing)",
+      "saida_propria_id": "tcc_macd_venda"
+    },
+    {
+      "id": "tcc_estocastico",
+      "fonte": "Prates (2021)",
+      "nome": "Rompimento do Estocástico",
+      "lado": "compra",
+      "entrada": "%K lento (5,3,3) cruza 20 para cima",
+      "saida_propria": "%K cruza 80 para baixo",
+      "stop_tecnico": "mínima das últimas 5 velas",
+      "alvo": "sem alvo (trailing)",
+      "saida_propria_id": "tcc_estocastico_venda"
+    },
+    {
+      "id": "tcc_fffd",
+      "fonte": "Prates (2021)",
+      "nome": "Fechou Fora Fechou Dentro (Bollinger 20,2)",
+      "lado": "compra",
+      "entrada": "fechamento anterior abaixo da banda inferior e atual de volta dentro",
+      "saida_propria": "fechamento anterior acima da banda superior e atual de volta dentro",
+      "stop_tecnico": "mínima das últimas 5 velas",
+      "alvo": "média de 20 / sem alvo",
+      "saida_propria_id": "tcc_fffd_venda"
+    },
+    {
+      "id": "oco_invertido",
+      "fonte": "Stanzione #2",
+      "nome": "Cabeça e ombros invertido",
+      "lado": "compra",
+      "entrada": "3 fundos confirmados (pivô 3), cabeça < ombros − 0,6 ATR, ombros iguais (±0,9 ATR); fechamento rompe a linha de pescoço (maior topo entre os ombros)",
+      "stop_tecnico": "mínima do ombro direito (últimas 10 velas)",
+      "alvo": "pescoço + (pescoço − cabeça)",
+      "saida_propria_id": null
+    },
+    {
+      "id": "fundo_duplo",
+      "fonte": "Stanzione #3",
+      "nome": "Fundo duplo",
+      "lado": "compra",
+      "entrada": "2 fundos iguais (±0,6 ATR, ≥ 5 velas entre eles); fechamento rompe o topo entre eles",
+      "stop_tecnico": "mínima das últimas 10 velas (meio do movimento de alta)",
+      "alvo": "pescoço + altura do W",
+      "saida_propria_id": null
+    },
+    {
+      "id": "xicara_alca",
+      "fonte": "Stanzione #5",
+      "nome": "Xícara e alça",
+      "lado": "compra",
+      "entrada": "bordas iguais (±3 %), ≥ 15 velas, profundidade 12–50 %, alça ≤ 1/3 da xícara; rompe a borda",
+      "stop_tecnico": "mínima da alça",
+      "alvo": "borda + profundidade da xícara",
+      "saida_propria_id": null
+    },
+    {
+      "id": "fundo_arredondado",
+      "fonte": "Stanzione #7",
+      "nome": "Fundo de arredondamento",
+      "lado": "compra",
+      "entrada": "em 60 velas: fundo no terço central, ≥ 10 % abaixo da borda esquerda, metade direita com mínimas subindo; fechamento rompe a borda esquerda",
+      "stop_tecnico": "mínima das últimas 10 velas",
+      "alvo": "borda + profundidade",
+      "saida_propria_id": null
+    },
+    {
+      "id": "triangulo_ascendente",
+      "fonte": "Stanzione #8",
+      "nome": "Triângulo ascendente (compra)",
+      "lado": "compra",
+      "entrada": "2 topos iguais (±0,6 ATR) e fundos subindo; fechamento rompe a resistência",
+      "stop_tecnico": "último fundo",
+      "alvo": "resistência + altura do triângulo",
+      "saida_propria_id": null
+    },
+    {
+      "id": "triangulo_descendente_alta",
+      "fonte": "Stanzione #9",
+      "nome": "Triângulo descendente (compra acima da LTB)",
+      "lado": "compra",
+      "entrada": "2 fundos iguais e topos caindo; fechamento rompe a linha dos topos",
+      "stop_tecnico": "logo abaixo da linha rompida / último fundo",
+      "alvo": "rompimento + altura do triângulo",
+      "saida_propria_id": null
+    },
+    {
+      "id": "cunha_descendente",
+      "fonte": "Stanzione #10",
+      "nome": "Cunha descendente",
+      "lado": "compra",
+      "entrada": "topos e fundos caindo, topos caindo mais rápido (convergente); fechamento rompe a linha dos topos",
+      "stop_tecnico": "último fundo da cunha",
+      "alvo": "rompimento + altura do início da cunha",
+      "saida_propria_id": null
+    },
+    {
+      "id": "oco",
+      "fonte": "Stanzione #1",
+      "nome": "Cabeça e ombros",
+      "lado": "saída",
+      "entrada": "spot sem venda a descoberto: rompimento da linha de pescoço para baixo FECHA compras",
+      "saida_propria_id": null
+    },
+    {
+      "id": "topo_duplo",
+      "fonte": "Stanzione #4",
+      "nome": "Topo duplo",
+      "lado": "saída",
+      "entrada": "rompimento do fundo entre os topos FECHA compras",
+      "saida_propria_id": null
+    },
+    {
+      "id": "topo_arredondado",
+      "fonte": "Stanzione #6",
+      "nome": "Topo de arredondamento",
+      "lado": "saída",
+      "entrada": "espelho do fundo arredondado; rompimento da borda esquerda para baixo FECHA compras",
+      "saida_propria_id": null
+    },
+    {
+      "id": "triangulo_descendente",
+      "fonte": "Stanzione #9",
+      "nome": "Triângulo descendente (venda)",
+      "lado": "saída",
+      "entrada": "rompimento do suporte horizontal FECHA compras",
+      "saida_propria_id": null
+    },
+    {
+      "id": "cunha_ascendente",
+      "fonte": "Stanzione #10",
+      "nome": "Cunha ascendente",
+      "lado": "saída",
+      "entrada": "topos e fundos subindo, fundos subindo mais rápido; rompimento da linha dos fundos FECHA compras",
+      "saida_propria_id": null
+    }
+  ]
+}
