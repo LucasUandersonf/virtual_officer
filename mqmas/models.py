@@ -289,7 +289,7 @@ class Position(BaseModel):
 
 EventType = Literal[
     "hello", "telemetry", "agent_message", "debate_start", "decision", "position", "risk", "system",
-    "league",
+    "league", "book",
 ]
 
 

@@ -199,6 +199,30 @@ def btc_regime(btc_daily: pd.DataFrame, sma: int = 100) -> pd.Series:
     return ok.fillna(False).astype(bool)
 
 
+def daily_trend(daily: pd.DataFrame) -> pd.Series:
+    """True on day D when, at D-1's close, price > EMA200 and EMA50 > EMA200 (daily chart)."""
+    c = daily["close"]
+    e50 = c.ewm(span=50, adjust=False, min_periods=50).mean()
+    e200 = c.ewm(span=200, adjust=False, min_periods=200).mean()
+    return ((c > e200) & (e50 > e200)).shift(1).fillna(False).astype(bool)
+
+
+def relative_strength(daily: dict[str, pd.DataFrame], eligible: dict[pd.Period, set[str]],
+                      lookback: int = 30) -> pd.DataFrame:
+    """Percentile rank (0–1) of each coin's trailing return inside that month's universe, known at the
+    open of the day (shifted one day)."""
+    closes = pd.DataFrame({c: d["close"] for c, d in daily.items()}).sort_index()
+    mom = closes / closes.shift(lookback) - 1
+    months = closes.index.tz_localize(None).to_period("M")
+    mask = pd.DataFrame({c: [c in eligible.get(m, ()) for m in months] for c in closes.columns},
+                        index=closes.index)
+    return mom.where(mask).rank(axis=1, pct=True).shift(1)
+
+
+def config_by_key() -> dict[str, Config]:
+    return {c.key: c for c in build_configs()}
+
+
 def align_daily(flag: pd.Series, index: pd.DatetimeIndex) -> np.ndarray:
     out: np.ndarray = flag.reindex(index.normalize()).fillna(False).to_numpy(dtype=bool)
     return out

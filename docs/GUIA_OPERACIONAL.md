@@ -123,14 +123,35 @@ O robô não fica preso a uma estratégia só. Ele mantém uma **biblioteca de 9
 
 O painel **Liga de Setups** mostra o ranking ao vivo. Setups reprovados aparecem com o motivo (passe o mouse). **Se nenhum setup for aprovado, o robô não opera.** Isso não é defeito: significa que nenhuma estratégia provou vantagem depois das taxas. Você pode afrouxar a meta de acerto (`MIN_WIN_RATE`, padrão 0,75), mas isso aumenta o risco. Decida olhando o relatório.
 
-### 3.3 Por quanto tempo ficar em paper?
+### 3.3 Carteira multi-moeda (o setup vencedor da pesquisa)
+
+A pesquisa (`/api/research`) testou 544 configurações em 40 moedas com walk-forward. O único setup sólido foi a **confluência diária de rompimento**, que agora roda em simulação na **Carteira multi-moeda**:
+
+| Camada | Regra |
+|---|---|
+| Universo | Todo mês: as 15 moedas USDT de maior volume em dólar (30 dias), com oscilação diária média de 2,5–15% |
+| Obrigatório | BTC acima da média de 100 dias (dia anterior) · moeda acima da EMA200 · EMA50 acima da EMA200 |
+| Gatilho | Fechamento diário acima da máxima dos 20 dias anteriores |
+| Extras (2 de 3) | Força relativa entre os 40% melhores · volume acima de 1,3× a média · RSI(14) entre 50 e 70 |
+| Saídas | Stop = entrada − 2,5×ATR · alvo = entrada + 4,5×ATR · saída por tempo em 20 dias |
+| Risco | 0,6% da banca por operação (`BOOK_RISK_PER_TRADE`) · máx. 3 posições · kill switch, circuit breaker e perda diária compartilhados |
+
+Resultado fora da amostra (jul/2023–out/2026): 102 trades, 56% de acerto, profit factor 2,29, drawdown máximo de 2,9%, ~2,5 trades por mês.
+
+Como funciona ao vivo: a cada 30 segundos o robô vigia stops, alvos e saídas por tempo das posições abertas. A cada fechamento de candle do tempo gráfico do setup (00:00 UTC no diário), ele reavalia as 40 moedas. Cada sinal passa pelo pre-mortem da CRO (IA), que pode vetar a entrada. Sem IA disponível, não entra (fail-closed).
+
+> Com 0,6% de risco e stops de ~14%, a maioria das posições fica abaixo do mínimo de US$ 5 da Binance. A simulação registra a operação e avisa quando isso acontece. No modo real seria preciso uma banca de ~US$ 120 ou um risco de ~1,5% por operação. A carteira ainda **não opera em modo LIVE**.
+
+Para adicionar novos setups aprovados pela pesquisa, coloque as chaves de configuração separadas por `;` em `BOOK_STRATEGIES`.
+
+### 3.4 Por quanto tempo ficar em paper?
 
 **Recomendação: no mínimo 4 a 8 semanas.** Motivos:
 
 - A trava `sample_size` exige pelo menos **20 operações** de evidência estatística. Os trades em paper contam como evidência.
 - A trava `win_rate` exige **taxa de acerto ≥ 75%**. Se o setup não atingir isso, o sistema simplesmente não opera, e isso é a proteção funcionando.
 
-### 3.4 Critérios para passar para dinheiro real
+### 3.5 Critérios para passar para dinheiro real
 
 Só avance quando **todos** forem verdadeiros:
 
@@ -239,6 +260,8 @@ Salve. Depois do redeploy:
 | `/api/state` | Banca, trades, bloqueios, posição aberta |
 | `/api/trades` | Histórico de trades fechados |
 | `/api/debates` | Histórico de debates |
+| `/api/book` | Carteira multi-moeda: setups ativos, universo, últimos sinais, posições |
+| `/api/research` | Relatório completo da pesquisa multi-moeda (walk-forward, estresse, Monte Carlo) |
 | `/api/league` | Ranking completo da Liga de Setups (estatísticas fora da amostra de cada setup) |
 
 ### 7.3 Botão de emergência (kill switch)

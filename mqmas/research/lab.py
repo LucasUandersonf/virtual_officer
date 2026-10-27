@@ -42,8 +42,10 @@ from mqmas.research.strategies import (
     align_daily,
     btc_regime,
     build_configs,
+    daily_trend,
     features,
     monthly_eligibility,
+    relative_strength,
 )
 
 log = logging.getLogger(__name__)
@@ -156,23 +158,8 @@ class Lab:
         self.btc_daily = self.data["1d"]["BTC/USDT"]
         self.end = max(d.index[-1] for d in self.data["1h"].values()).normalize()
         self.eligible = monthly_eligibility(self.data["1d"], self.top_n, self.min_range, self.max_range)
-        self.rs = self.relative_strength()
-        self.daily_trend: dict[str, pd.Series] = {}
-        for coin, d in self.data["1d"].items():
-            c = d["close"]
-            e50, e200 = c.ewm(span=50, adjust=False, min_periods=50).mean(), c.ewm(
-                span=200, adjust=False, min_periods=200).mean()
-            self.daily_trend[coin] = ((c > e200) & (e50 > e200)).shift(1).fillna(False).astype(bool)
-
-    def relative_strength(self, lookback: int = 30) -> pd.DataFrame:
-        """Percentile rank (0–1) of each coin's trailing return inside that month's universe, known at the
-        open of the day (shifted one day)."""
-        closes = pd.DataFrame({c: d["close"] for c, d in self.data["1d"].items()}).sort_index()
-        mom = closes / closes.shift(lookback) - 1
-        months = closes.index.tz_localize(None).to_period("M")
-        mask = pd.DataFrame({c: [c in self.eligible.get(m, ()) for m in months] for c in closes.columns},
-                            index=closes.index)
-        return mom.where(mask).rank(axis=1, pct=True).shift(1)
+        self.rs = relative_strength(self.data["1d"], self.eligible)
+        self.daily_trend = {coin: daily_trend(d) for coin, d in self.data["1d"].items()}
 
     # ------------------------------------------------------------------ bracket strategies
 

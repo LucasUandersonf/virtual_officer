@@ -93,7 +93,8 @@ class RiskManager:
             g.append(GateResult(name=name, passed=bool(passed), detail=detail))
 
         lock = await self.lock_until()
-        active = await self._db.active_positions(self.mode)
+        active = [p for p in await self._db.active_positions(self.mode, symbol=self._s.symbol)
+                  if not (p.setup or "").startswith("book:")]
         kill = await self.kill_switch_engaged()
 
         gate("spot_only", True, "conta e ordens estritamente SPOT, sem margem/derivativos")

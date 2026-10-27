@@ -193,11 +193,13 @@ class Database:
             setup=r["setup"],
         )
 
-    async def active_positions(self, mode: str) -> list[Position]:
-        async with self.conn.execute(
-            "SELECT * FROM positions WHERE mode=? AND status IN ('pending','open') ORDER BY id",
-            (mode,),
-        ) as cur:
+    async def active_positions(self, mode: str, symbol: str | None = None) -> list[Position]:
+        sql = "SELECT * FROM positions WHERE mode=? AND status IN ('pending','open')"
+        params: tuple[Any, ...] = (mode,)
+        if symbol:
+            sql += " AND symbol=?"
+            params += (symbol,)
+        async with self.conn.execute(sql + " ORDER BY id", params) as cur:
             return [self._row_to_position(r) for r in await cur.fetchall()]
 
     async def closed_positions(self, mode: str, limit: int = 500) -> list[Position]:

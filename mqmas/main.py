@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from mqmas.agents.orchestrator import Orchestrator
 from mqmas.agents.personas import PERSONAS
+from mqmas.book.engine import StrategyBook
 from mqmas.config import Settings, get_settings
 from mqmas.data.market_feed import MarketFeed, build_feed
 from mqmas.execution.broker import build_broker
@@ -48,6 +49,7 @@ class Runtime:
     positions: PositionManager
     orchestrator: Orchestrator
     league: SetupLeague
+    book: StrategyBook | None
     stop: asyncio.Event
     tasks: list[asyncio.Task[None]]
 
@@ -89,7 +91,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(positions.run(stop), name="position_manager"),
         asyncio.create_task(league.run(stop), name="setup_league"),
     ]
-    runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, stop, tasks)
+    book = StrategyBook(s, db, risk, router, hub, feed.exchange) if s.book_enabled and feed.exchange else None
+    if book:
+        tasks.append(asyncio.create_task(book.run(stop), name="strategy_book"))
+    runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, book, stop, tasks)
     if s.research_on_boot:
         tasks.append(asyncio.create_task(_research_once(s), name="research_lab"))
     try:
@@ -173,6 +178,14 @@ async def league_report() -> dict[str, Any]:
     return {"ready": report is not None, "running": rt.league.running, "age_hours": rt.league.age_hours(),
             "report": report.model_dump(mode="json") if report else None,
             "watching": [f.model_dump(mode="json") for f in rt.orchestrator.watching]}
+
+
+@app.get("/api/book")
+async def book_state() -> dict[str, Any]:
+    rt = _rt()
+    if rt.book is None:
+        return {"enabled": False}
+    return {"enabled": True, **await rt.book.snapshot()}
 
 
 @app.get("/api/research")

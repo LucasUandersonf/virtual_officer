@@ -90,7 +90,17 @@ class Settings(BaseSettings):
     league_folds: int = Field(default=5, ge=3, le=10)
     league_min_profit_factor: float = Field(default=1.15, ge=1.0)
     max_hold_minutes: int = Field(default=480, ge=30)  # time stop, identical in backtest and live
-    research_on_boot: bool = False  # run the multi-asset research lab once (subprocess) if no report exists
+    research_on_boot: bool = False
+
+    # --- Strategy book (multi-coin, research-approved setups; paper only) -----------
+    book_enabled: bool = True
+    book_strategies: str = "confluence|1d|trigger=breakout,min_extra=2,rs_min=0.6|stop=2.5|tp=4.5|trail=None|hold=20"
+    book_risk_per_trade: float = Field(default=0.006, gt=0, le=0.015)
+    book_max_positions: int = Field(default=3, ge=1, le=5)
+    book_pool_size: int = Field(default=40, ge=10, le=80)
+    book_top_n: int = Field(default=15, ge=3, le=40)
+    book_min_range: float = 0.025
+    book_max_range: float = 0.15  # run the multi-asset research lab once (subprocess) if no report exists
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 
     # --- Agent loop ---------------------------------------------------------------

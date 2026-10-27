@@ -130,7 +130,8 @@ class Orchestrator:
             "spark": [round(float(c), 2) for c in df["close"].iloc[-96:]],
         })
 
-        active = await self._db.active_positions(self._s.trading_mode.value)
+        active = [p for p in await self._db.active_positions(self._s.trading_mode.value, symbol=self._s.symbol)
+                  if not (p.setup or "").startswith("book:")]
         now = time.monotonic()
         fired = await self._new_signals(df)
         approved = [f for f in fired if f.approved]

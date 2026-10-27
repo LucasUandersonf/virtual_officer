@@ -359,6 +359,39 @@ async function loadLeague() {
   } catch (e) { setTimeout(loadLeague, 20000); }
 }
 
+// ===================================================================== strategy book
+function renderBook(b) {
+  if (!b || b.enabled === false) { $("bk-sub").textContent = "desativada"; return; }
+  const regime = b.btc_regime_ok === null || b.btc_regime_ok === undefined ? "regime BTC —"
+    : (b.btc_regime_ok ? "regime BTC ✔ favorável" : "regime BTC ✖ (em caixa)");
+  $("bk-sub").textContent = `${(b.universe || []).length} moedas no radar · ${regime}`;
+  if (b.strategies) $("bk-strats").textContent = `Setups ativos: ${b.strategies.join(", ")}`;
+  const sigs = b.last_signals || [];
+  const when = b.last_run ? new Date(b.last_run).toLocaleString("pt-BR") : "—";
+  $("bk-signals").textContent = sigs.length
+    ? `Últimos sinais (${when}): ${sigs.map((x) => x.symbol).join(", ")}`
+    : `Última análise: ${when} · nenhum sinal${(b.notes || []).length ? " · " + b.notes.join("; ") : ""}`;
+  if (!b.open_positions) return;
+  const list = $("bk-pos");
+  list.replaceChildren();
+  if (!b.open_positions.length) { list.append(el("li", "muted-sm", "Sem posições abertas.")); return; }
+  for (const p of b.open_positions) {
+    const li = el("li", "lg-row ok");
+    const name = el("div", "lg-name");
+    const title = el("strong", "", p.symbol);
+    title.append(el("span", "lg-badge ok", "ABERTA"));
+    name.append(title, el("span", "", `entrada ${fmt(p.entry_price, 4)} · ${new Date(p.opened_at).toLocaleDateString("pt-BR")}`));
+    const st = el("div", "lg-stats mono");
+    st.append(el("span", "neg", `stop ${fmt(p.stop_price, 4)}`), el("span", "pos", `alvo ${fmt(p.take_profit_price, 4)}`));
+    li.append(el("span", "lg-rank mono", "•"), name, st);
+    list.append(li);
+  }
+}
+
+async function loadBook() {
+  try { const r = await fetch("/api/book"); if (r.ok) renderBook(await r.json()); } catch (e) { /* retry on next event */ }
+}
+
 // ===================================================================== websocket
 function handle(ev) {
   const p = ev.payload;
@@ -403,13 +436,16 @@ function handle(ev) {
     }
     case "position": {
       const pos = p.position;
-      renderPosition(pos);
-      if (p.event === "closed") addMinute(null, "Mesa", `Posição encerrada (${pos.exit_reason}) · PnL US$ ${fmt(pos.pnl_usdt, 4)}`, ev.ts);
-      else if (p.event === "opened") addMinute(null, "Mesa", `Posição aberta: ${fmt(pos.quantity, 5)} BTC @ ${fmt(pos.entry_price)}`, ev.ts);
+      loadBook();
+      if (!(pos.setup || "").startsWith("book:")) renderPosition(pos);
+      if (p.event === "closed") addMinute(null, "Mesa", `Posição ${pos.symbol} encerrada (${pos.exit_reason}) · PnL US$ ${fmt(pos.pnl_usdt, 4)}`, ev.ts);
+      else if (p.event === "opened") addMinute(null, "Mesa", `Posição aberta: ${fmt(pos.quantity, 5)} ${pos.symbol.split("/")[0]} @ ${fmt(pos.entry_price, 4)}`, ev.ts);
       break;
     }
     case "league":
       renderLeague(p); break;
+    case "book":
+      renderBook(p); break;
     case "risk":
       if (p.event === "circuit_breaker") { $("pill-lock").hidden = false; addMinute(null, "Risco", `Circuit breaker armado até ${new Date(p.lock_until).toLocaleString("pt-BR")}`, ev.ts); }
       else if (p.event === "kill_switch") { setKill(p.engaged); addMinute(null, "Risco", p.engaged ? "Kill switch ACIONADO" : "Kill switch liberado", ev.ts); }
@@ -492,10 +528,12 @@ async function boot() {
     setKill(Boolean(st.kill_switch));
     $("pill-lock").hidden = !st.lock_until;
     if (st.last_decision && st.last_decision.sizing) renderPlan(st.last_decision.sizing, "último debate", null);
-    if (st.open_positions && st.open_positions.length) renderPosition(st.open_positions[0]);
+    const desk = (st.open_positions || []).filter((x) => !(x.setup || "").startsWith("book:"));
+    if (desk.length) renderPosition(desk[0]);
   } catch (e) { console.warn("state unavailable", e); }
   connect();
   loadLeague();
+  loadBook();
   setInterval(() => { tickTimer(); tickAge(); }, 1000);
 }
 boot();

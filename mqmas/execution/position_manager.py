@@ -34,13 +34,18 @@ class PositionManager:
     def mode(self) -> str:
         return self._s.trading_mode.value
 
+    async def _desk_positions(self) -> list[Position]:
+        """BTC desk positions only: the multi-coin strategy book supervises its own."""
+        return [p for p in await self._db.active_positions(self.mode, symbol=self._s.symbol)
+                if not (p.setup or "").startswith("book:")]
+
     async def _publish(self, p: Position, event: str) -> None:
         await self._hub.publish("position", {"event": event, "position": p.model_dump(mode="json")})
 
     async def open_position(self, debate_id: str, plan: SizingPlan, limit_price: float,
                             setup: str | None = None) -> Position | None:
         async with self._lock:
-            if await self._db.active_positions(self.mode):
+            if await self._desk_positions():
                 log.warning("refusing entry: a position is already active")
                 return None
             qty = self._broker.normalize_quantity(plan.quantity)
@@ -104,7 +109,7 @@ class PositionManager:
             return
         bid = float(bids[0][0])
         kill = await self._risk.kill_switch_engaged()
-        for p in await self._db.active_positions(self.mode):
+        for p in await self._desk_positions():
             if p.status is not PositionStatus.OPEN:
                 continue
             if p.stop_order_id:
@@ -125,7 +130,7 @@ class PositionManager:
 
     async def reconcile_on_boot(self) -> None:
         """A PENDING row at boot means we crashed mid-entry: never assume a fill."""
-        for p in await self._db.active_positions(self.mode):
+        for p in await self._desk_positions():
             if p.status is PositionStatus.PENDING:
                 log.warning("pending position %s found at boot — marking cancelled; verify exchange manually", p.id)
                 await self._cancel_entry(p, "orphan_pending_entry")
