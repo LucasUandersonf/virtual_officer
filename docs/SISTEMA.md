@@ -153,3 +153,32 @@ TREND_ACTIVE_SPECIALISTS=    # todos em sombra no começo
 - **A queda máxima de 38% vai acontecer de novo.** A do caçador de ondas sozinho foi de 67%.
 - **Desde jul/2023** a carteira rendeu +36% ao ano contra +34% de segurar BTC, com queda máxima de 35% contra 53%.
 - **Antes de dinheiro real:** 8 semanas em paper, conferindo se o resultado bate com o backtest. Ao vivo, abaixo de ~US$ 120, a ordem mínima de US$ 5 deixa boa parte do dinheiro parada.
+
+## 8. Plano da equipe
+
+**Foco:** só as estratégias que passaram na prova com dados reais: o gestor de tendência e o caçador de ondas, com o comitê em sombra. Nenhuma estratégia nova entra sem passar pelo mesmo teste (`.github/workflows/research.yml`).
+
+**Meta:** **20–40% ao ano** na média de vários anos, somando os dois potes. Não é uma promessa para cada ano.
+
+| Pote | Parte | Onde |
+|---|---|---|
+| Seguro | 50% | CDI / Tesouro Selic |
+| Surfista | 50% | Robô na Binance (70% tendência + 30% ondas) |
+
+**Fases**
+1. **Treino (8 semanas):** robô em paper, sem dinheiro real.
+2. **Início real:** a partir de ~US$ 120 no pote surfista, chave de API só com Spot e sem saque.
+3. **Crescimento:** depois de 12 meses reais dentro do esperado, a parte do robô pode aumentar aos poucos.
+
+**Reunião mensal (30 minutos)**
+- O robô seguiu as regras? Teve erro de execução? (logs, Telegram)
+- Resultado do mês × faixa esperada. Um mês negativo é normal: no backtest, ~metade dos meses fecha no vermelho.
+- Placar dos especialistas (`python -m mqmas.runner --placar`).
+- **Comemoração: no fim do trimestre e do ano**, olhando os dois potes somados.
+
+**Sinais de alerta: a estratégia pode ter parado de funcionar**
+- A queda passou da maior queda do backtest (tendência 35%, ondas 67%, carteira 38%). As travas automáticas param o gestor e a equipe revisa antes do `--reset-halt`.
+- 12 meses reais seguidos abaixo do CDI. Revisar a estratégia e reduzir a parte do robô.
+- A pesquisa mensal do GitHub mostrar a estratégia piorando nos dados mais recentes.
+
+Quando um alerta disparar, **não aumentar o risco para "recuperar"**: reduzir, entender e só voltar depois que a pesquisa confirmar.
