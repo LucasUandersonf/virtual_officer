@@ -53,6 +53,9 @@ def features(df: pd.DataFrame) -> pd.DataFrame:
     for k in (2.0, 2.5):
         f[f"bblo{k}"] = mid - k * sd
     f["bbup2.0"] = mid + 2 * sd
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    day = df.index.normalize()
+    f["vwap"] = (tp * df["volume"]).groupby(day).cumsum() / df["volume"].groupby(day).cumsum().replace(0, np.nan)
     for q in (0.1, 0.2):
         f[f"bbwq{q}"] = f["bbw"].rolling(100).quantile(q)
     return f
@@ -106,6 +109,28 @@ def _confluence(f: pd.DataFrame, p: dict[str, Any], regime: np.ndarray) -> np.nd
     return out
 
 
+def _mtf(f: pd.DataFrame, p: dict[str, Any], regime: np.ndarray) -> np.ndarray:
+    """Multi-timeframe confluence: the *daily* chart says what to buy, the intraday chart says when.
+
+    mandatory  BTC regime · coin's daily trend (prev-day close > EMA200 and EMA50 > EMA200) ·
+               intraday close > intraday EMA200
+    trigger    pullback bounce off the intraday EMA50 | RSI(3) dip | 20-bar breakout | VWAP reclaim
+    extras     relative strength ≥ rs_min · volume > 1.3× average · RSI(14) in 45–70
+    """
+    c = f["close"]
+    mandatory = f["d_trend"].astype(bool) & (c > f["ema200"])
+    trig = {
+        "pullback": (f["low"] <= f["ema50"]) & (c > f["ema50"]) & (c > f["open"]),
+        "rsi_dip": f["rsi3"] < 15,
+        "breakout": c > f["hh20"],
+        "vwap": (c.shift(1) < f["vwap"].shift(1)) & (c > f["vwap"]),
+    }[p["trigger"]]
+    extras = ((f["rs"] >= p["rs_min"]).astype(int) + (f["volume"] > 1.3 * f["vol20"]).astype(int)
+              + f["rsi14"].between(45, 70).astype(int))
+    out: np.ndarray = (mandatory & trig & (extras >= p["min_extra"])).to_numpy(dtype=bool) & regime
+    return out
+
+
 @dataclass(frozen=True)
 class Config:
     family: str
@@ -127,7 +152,7 @@ class Config:
 
 FAMILIES: dict[str, SignalFn] = {
     "breakout": _breakout, "pullback": _pullback, "meanrev": _meanrev, "squeeze": _squeeze,
-    "confluence": _confluence,
+    "confluence": _confluence, "mtf": _mtf,
 }
 HOLD = {"1h": 120, "4h": 60, "1d": 40}  # 5, 10 and 40 days
 
@@ -155,6 +180,12 @@ def build_configs(timeframes: tuple[str, ...] = ("1h", "4h", "1d")) -> list[Conf
                       Exit(2.5, 4.5, None, h // 2), Exit(2.0, 6.0, 3.0, h)]
         out += _grid("confluence", tf, {"trigger": ["breakout", "pullback", "either"], "min_extra": [2, 3],
                                         "rs_min": [0.6, 0.8]}, conf_exits)
+    for tf in ("1h", "4h"):
+        h = HOLD[tf]
+        mtf_exits = [Exit(2.0, None, 3.0, h), Exit(3.0, None, 4.5, h), Exit(2.0, 3.0, None, h // 2),
+                     Exit(2.5, 4.5, None, h // 2), Exit(2.0, 6.0, 3.0, h)]
+        out += _grid("mtf", tf, {"trigger": ["pullback", "rsi_dip", "breakout", "vwap"], "min_extra": [1, 2],
+                                 "rs_min": [0.6, 0.8]}, mtf_exits)
     return out
 
 

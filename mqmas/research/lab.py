@@ -48,7 +48,7 @@ from mqmas.research.strategies import (
 
 log = logging.getLogger(__name__)
 
-VERSION = 3
+VERSION = 4
 HISTORY_START = pd.Timestamp("2022-01-01", tz="UTC")
 FIRST_TEST = pd.Timestamp("2023-07-01", tz="UTC")
 WINDOW_MONTHS = 6
@@ -157,6 +157,12 @@ class Lab:
         self.end = max(d.index[-1] for d in self.data["1h"].values()).normalize()
         self.eligible = monthly_eligibility(self.data["1d"], self.top_n, self.min_range, self.max_range)
         self.rs = self.relative_strength()
+        self.daily_trend: dict[str, pd.Series] = {}
+        for coin, d in self.data["1d"].items():
+            c = d["close"]
+            e50, e200 = c.ewm(span=50, adjust=False, min_periods=50).mean(), c.ewm(
+                span=200, adjust=False, min_periods=200).mean()
+            self.daily_trend[coin] = ((c > e200) & (e50 > e200)).shift(1).fillna(False).astype(bool)
 
     def relative_strength(self, lookback: int = 30) -> pd.DataFrame:
         """Percentile rank (0–1) of each coin's trailing return inside that month's universe, known at the
@@ -183,6 +189,8 @@ class Lab:
                 reg = align_daily(regime, f.index)
                 rs = self.rs[coin] if coin in self.rs.columns else pd.Series(dtype=float)
                 f["rs"] = rs.reindex(f.index.normalize()).to_numpy()
+                f["d_trend"] = self.daily_trend.get(coin, pd.Series(dtype=bool)).reindex(
+                    f.index.normalize()).fillna(False).to_numpy(dtype=bool)
                 months = f.index.tz_localize(None).to_period("M")
                 elig = np.array([coin in self.eligible.get(m, ()) for m in months], dtype=bool)
                 o, h, lo, cl = (f[k].to_numpy() for k in ("open", "high", "low", "close"))
@@ -294,6 +302,18 @@ class Lab:
                 p.pop("start"), p.pop("end")
             candidates.append(self.evaluate(name, r["oos_trades"], r["trial_srs"],
                                             st_res.metrics["profit_factor"], r["picks"], last_cfg))
+        # Ensemble fixed *a priori* (before seeing v4 results): every confluence/MTF family runs together
+        # on one book, each with its own walk-forward picks. More signals per day, shared risk limits.
+        members = [n for n in wf if n.startswith(("confluence|", "mtf|"))]
+        parts = [wf[n]["oos_trades"] for n in members if wf[n]["oos_trades"] is not None]
+        if parts:
+            ens = pd.concat(parts, ignore_index=True)
+            st_ens = ens.assign(ret=ens["ret"] - extra)
+            st_pf = simulate_portfolio(st_ens, self.rules, Costs(self.costs.fee * 2, self.costs.slippage * 2),
+                                       FIRST_TEST, self.end).metrics["profit_factor"]
+            trial_srs = [x for n in members for x in wf[n]["trial_srs"]]
+            candidates.append(self.evaluate("ensemble-confluencia", ens, trial_srs, st_pf,
+                                            [{"members": members}], " + ".join(members)))
         all_rot = rotation_configs()
         candidates.append(self.rotation("rotation|1d", all_rot, all_rot))
         candidates.append(self.rotation("rotation-safe|1d", [c for c in all_rot if c.trend_exit], all_rot))
@@ -349,7 +369,8 @@ def summarize(report: dict[str, Any]) -> list[str]:
     for c in report["candidates"]:
         m = c["metrics"]
         lines.append(
-            f"{'APROVADO ' if c['approved'] else 'reprovado'} {c['name']:<14} mês médio {m['monthly_mean']:+.2%} "
+            f"{'APROVADO ' if c['approved'] else 'reprovado'} {c['name']:<14} "
+            f"trades/mês {m['trades'] / max(m['months'], 1):.1f} mês médio {m['monthly_mean']:+.2%} "
             f"mediana {m['monthly_median']:+.2%} pior {m['monthly_worst']:+.2%} meses+ {m['positive_months']:.0%} | "
             f"trades {m['trades']:.0f} acerto {m['win_rate']:.0%} PF {m['profit_factor']:.2f} payoff {m['payoff']:.2f} "
             f"DD {m['max_drawdown']:.1%} Sharpe {m['sharpe']:.2f} Sortino {m['sortino']:.2f} DSR {m['dsr']:.2f} "
