@@ -86,7 +86,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <span class="eyebrow">MQ-MAS · Mesa quant · Binance Spot</span>
     <h1>Playbook de Setups</h1>
     <p>Os 10 setups da lista do time, mais o setup vencedor da nossa pesquisa, testados com a mesma régua: dados reais de 40 moedas, validação fora da amostra (walk-forward) de jul/2023 a out/2026, taxas e derrapagem descontadas, e correção pelo número de testes feitos. Nenhum setup entra no robô sem passar aqui.</p>
-    <div class="meta"><span>670 configurações testadas</span><span>40 moedas · 1h / 4h / 1d</span><span>custo 0,15% por lado</span><span>atualizado 27/out/2026</span></div>
+    <div class="meta"><span>958 configurações testadas</span><span>40 moedas · 1h / 4h / 1d</span><span>custo 0,15% por lado</span><span>atualizado 27/out/2026</span></div>
   </header>
 
   <section aria-labelledby="h-regra">
@@ -228,6 +228,44 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </div>
   </section>
 
+  <section aria-labelledby="h-swing">
+    <span class="eyebrow">Swing de até 2 dias · pesquisa v6</span>
+    <h2 id="h-swing">Teste pesado: dados multidimensionais e IA</h2>
+    <p>288 configurações em 33 moedas, segurando no máximo 48 horas. Camadas de dados: preço e volume de 1h, <b>fluxo de ordens</b> (volume de compra agressiva da Binance), <b>funding rate</b> dos futuros em 32 moedas, <b>sentimento</b> (Índice de Medo e Ganância, 3.187 dias), força relativa, tendência diária e amplitude do mercado. Open interest e liquidações ficaram de fora: a Binance só guarda 30 dias, então não dá para validar.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Setup (≤ 48h)</th><th>Status</th><th>Trades/mês</th><th>Mês médio</th><th>PF</th><th>DD</th><th>Leitura</th></tr></thead>
+      <tbody>
+        <tr><td>Momentum diário de 2 dias</td><td><span class="status s-obs">Observação</span></td><td class="num">6,9</td><td class="num">+0,29%</td><td class="num">1,42</td><td class="num">7,3%</td><td>Todas as variações ganharam fora da amostra (robustez 100%). Falta força estatística.</td></tr>
+        <tr><td>Medo extremo + retomada da EMA20 (4h)</td><td><span class="status s-obs">Observação</span></td><td class="num">6,9</td><td class="num">+0,28%</td><td class="num">1,25</td><td class="num">6,2%</td><td>Compra no pânico com fluxo comprador voltando. Margem fina com custo dobrado (PF 1,05).</td></tr>
+        <tr><td>Rompimento com fluxo comprador (4h)</td><td><span class="status s-obs">Observação</span></td><td class="num">5,1</td><td class="num">+0,25%</td><td class="num">1,22</td><td class="num">4,7%</td><td>O tamanho ajustado pela volatilidade baixou o drawdown para 3,8%.</td></tr>
+        <tr><td>Rompimento com fluxo (1h)</td><td><span class="status s-rep">Reprovado</span></td><td class="num">10,3</td><td class="num">+0,01%</td><td class="num">1,00</td><td class="num">12,8%</td><td>Empata; com custo dobrado perde.</td></tr>
+        <tr><td>Funding negativo (squeeze)</td><td><span class="status s-rep">Reprovado</span></td><td class="num">5–7</td><td class="num">−0,2 a −0,8%</td><td class="num">0,65–0,83</td><td class="num">14–31%</td><td>O squeeze dos vendidos não compensou como gatilho isolado.</td></tr>
+        <tr><td>Recuo RSI-2 em tendência</td><td><span class="status s-rep">Reprovado</span></td><td class="num">29–30</td><td class="num">−1,0 a −1,7%</td><td class="num">0,52–0,70</td><td class="num">33–51%</td><td>Acerta 51–59%, mas perde mais do que ganha (payoff 0,6).</td></tr>
+        <tr><td>Pullback na VWAP (1h)</td><td><span class="status s-rep">Reprovado</span></td><td class="num">33,9</td><td class="num">−0,77%</td><td class="num">0,92</td><td class="num">42,6%</td><td>Muitas operações, as taxas destroem.</td></tr>
+        <tr><td>Clímax de venda (1h)</td><td><span class="status s-rep">Reprovado</span></td><td class="num">1,6</td><td class="num">−0,27%</td><td class="num">0,50</td><td class="num">11%</td><td>Pegar faca caindo em 1h não funciona.</td></tr>
+        <tr><td><b>IA: filtro de machine learning</b></td><td><span class="status s-rep">Reprovado</span></td><td class="num">15,5</td><td class="num">−0,33%</td><td class="num">0,85</td><td class="num">13,8%</td><td>Em 4 das 7 janelas a própria IA concluiu que não havia vantagem e ficou de fora.</td></tr>
+        <tr><td>Roteador de cenários</td><td><span class="status s-rep">Reprovado</span></td><td class="num">7,0</td><td class="num">−0,14%</td><td class="num">0,85</td><td class="num">9,6%</td><td>Escolher o setup pelo cenário não salvou setups sem vantagem.</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>O que a IA aprendeu.</b> As variáveis que mais pesaram foram o retorno da última barra, a volatilidade (ATR%), a <b>mudança do sentimento em 3 dias</b>, o nível do Medo e Ganância, o retorno de 24 barras, a amplitude do mercado e o <b>funding fora do normal</b>. Esses dados ajudam a explicar o mercado, mas não deram vantagem suficiente para pagar as taxas em operações de até 48 horas.</p>
+    <p><b>Gestão de risco dinâmica.</b> Cortar o risco pela metade quando a banca está 5% abaixo do pico reduziu o drawdown em 30–40% nas estratégias perdedoras (ex.: RSI-2 de 50,7% para 31,8%). Nas vencedoras custou pouco retorno. Fica como regra padrão.</p>
+  </section>
+
+  <section aria-labelledby="h-cenarios">
+    <span class="eyebrow">Mapa de cenários</span>
+    <h2 id="h-cenarios">O que o time faz em cada cenário</h2>
+    <p>Os cenários foram descobertos pela IA (agrupamento k-means), usando a tendência e a volatilidade do BTC, o sentimento, o funding e a amplitude do mercado, ajustado só com dados anteriores ao teste.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Cenário</th><th>Frequência</th><th>Setup principal</th><th>Complementares (simulação)</th><th>Risco</th></tr></thead>
+      <tbody>
+        <tr><td><span class="t-alta"><b>Alta · neutro · calmo</b></span><br><span class="mono">BTC +12% em 20d · F&amp;G 51</span></td><td class="num">665 dias</td><td>Confluência diária de rompimento</td><td>Momentum de 2 dias · rompimento com fluxo (4h)</td><td>0,6% por operação</td></tr>
+        <tr><td><span class="t-lateral"><b>Lateral · medo · calmo</b></span><br><span class="mono">BTC −3% · F&amp;G 31 · hoje</span></td><td class="num">492 dias</td><td>Confluência só se aparecer sinal (raro)</td><td>Medo extremo + retomada da EMA20 (4h)</td><td>0,3–0,6%, metade do normal</td></tr>
+        <tr><td><span class="t-queda"><b>Queda · medo · volátil</b></span><br><span class="mono">BTC −14% · F&amp;G 18 · vol 82%</span></td><td class="num">57 dias</td><td><b>Caixa em USDT</b></td><td>Nenhum</td><td>Zero</td></tr>
+        <tr><td><span class="t-volatil"><b>Euforia</b></span></td><td class="num">não ocorreu no período testado</td><td>Confluência, com stops normais</td><td>—</td><td>0,6%</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
   <section aria-labelledby="h-roteador">
     <span class="eyebrow">Teste da regra de ouro</span>
     <h2 id="h-roteador">Roteador por regime</h2>
@@ -252,7 +290,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       <li>Rodar o setup vencedor em simulação por 2 a 3 meses e comparar com o teste.</li>
       <li>Escolher o risco por operação: 0,6% com banca de ~US$ 120, ou 1,5% com US$ 50.</li>
       <li>Decidir se a rotação com dominância (#9) entra como segundo setup, aceitando drawdown de ~15%.</li>
-      <li>Pesquisar novas confluências: universo de 25 moedas, gráfico de 12h, funding e open interest como filtros.</li>
+      <li>Colocar os 3 setups de swing em observação para rodar em simulação ao lado do vencedor, para juntar evidência ao vivo.</li>
+      <li>Ativar a redução automática de risco depois de um drawdown de 5%.</li>
     </ol>
   </section>
 
