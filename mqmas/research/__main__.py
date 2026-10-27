@@ -1,4 +1,4 @@
-"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|all]``.
+"""``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -138,6 +138,16 @@ def main() -> None:
             for line in livro.summarize(rep):
                 log.info(line)
             log.info("livro report saved to %s", path)
+    if which in ("cross", "all"):
+        from mqmas.research import crosscheck
+
+        path = root / "crosscheck_report.json"
+        if which == "cross" or not _current(path, crosscheck.VERSION):
+            rep = crosscheck.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in crosscheck.summarize(rep):
+                log.info(line)
+            log.info("crosscheck report saved to %s", path)
 
 
 if __name__ == "__main__":

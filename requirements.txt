@@ -10,3 +10,4 @@ pydantic-settings==2.16.1
 scipy==1.18.1
 scikit-learn==1.9.1
 uvicorn[standard]==0.54.0
+backtesting==0.6.6  # independent backtester used by mqmas.research.crosscheck (AGPL-3.0)

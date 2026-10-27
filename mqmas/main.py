@@ -375,6 +375,15 @@ async def research_livro() -> dict[str, Any]:
             "linhas": [{k: r[k] for k in ("key", "total", "periodo1", "periodo2")} for r in rep["linhas"]]}
 
 
+@app.get("/api/research/crosscheck")
+async def research_crosscheck() -> dict[str, Any]:
+    """Our engine vs backtesting.py on the same Binance candles and rules."""
+    path = _research_root(_rt().settings) / "crosscheck_report.json"
+    if not path.exists():
+        return {"ready": False}
+    return {"ready": True, "report": json.loads(path.read_text())}
+
+
 @app.get("/api/research/tcc")
 async def research_tcc() -> dict[str, Any]:
     """The four models of Prates (2021) on Binance, in the thesis' report format."""
