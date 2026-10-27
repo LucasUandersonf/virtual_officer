@@ -31,11 +31,12 @@ class RotationConfig:
     vol_target: float | None
     rebalance: int = 7
     trend_exit: bool = False  # drop a holding as soon as it closes below its own SMA20
+    dominance: bool = False  # alts only while they beat BTC over the lookback (BTC.D falling), else BTC
 
     @property
     def key(self) -> str:
         return (f"rotation|1d|lookback={self.lookback},top={self.top_k},sma={self.sma},"
-                f"voltarget={self.vol_target},rebal={self.rebalance},trendexit={self.trend_exit}")
+                f"voltarget={self.vol_target},rebal={self.rebalance},trendexit={self.trend_exit},dominance={self.dominance}")
 
 
 def rotation_configs() -> list[RotationConfig]:
@@ -43,7 +44,8 @@ def rotation_configs() -> list[RotationConfig]:
           itertools.product((14, 30, 60), (1, 3, 5), (50, 100), (None, 0.5))]
     v2 = [RotationConfig(lb, k, sma, vt, 7, te) for lb, k, sma, vt, te in
           itertools.product((30, 60, 90), (3, 5), (100, 200), (0.25, 0.4), (False, True))]
-    return v1 + v2
+    v3 = [RotationConfig(lb, k, 100, 0.4, 7, True, True) for lb, k in itertools.product((30, 60), (3, 5))]
+    return v1 + v2 + v3
 
 
 def rotation_returns(closes: pd.DataFrame, btc_close: pd.Series, eligible: dict[pd.Period, set[str]],
@@ -67,6 +69,12 @@ def rotation_returns(closes: pd.DataFrame, btc_close: pd.Series, eligible: dict[
                 pool = eligible.get(d_prev.tz_localize(None).to_period("M"), set())
                 m = mom.loc[d_prev, [c for c in closes.columns if c in pool]].dropna()
                 picks = m[m > 0].sort_values(ascending=False).head(cfg.top_k).index
+                if cfg.dominance:
+                    alts = m.drop(labels=[btc_close.name], errors="ignore")
+                    btc_mom = mom.at[d_prev, btc_close.name] if btc_close.name in mom.columns else 0.0
+                    alt_season = len(alts) > 0 and float(alts.median()) > float(btc_mom)
+                    if not alt_season:  # BTC dominance rising: park in BTC instead of alts
+                        picks = pd.Index([btc_close.name]) if btc_close.name in closes.columns else pd.Index([])
                 if len(picks):
                     w = 1.0 / cfg.top_k  # unfilled slots stay in cash
                     target[picks] = w

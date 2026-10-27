@@ -37,6 +37,43 @@ def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
 
 
+def adx(df: pd.DataFrame, n: int = 14) -> pd.Series:
+    """Wilder's ADX: trend *strength* regardless of direction (>20–25 = trending)."""
+    up = df["high"].diff()
+    dn = -df["low"].diff()
+    plus = up.where((up > dn) & (up > 0), 0.0)
+    minus = dn.where((dn > up) & (dn > 0), 0.0)
+    a = atr(df, n)
+    pdi = 100 * plus.ewm(alpha=1 / n, adjust=False).mean() / a
+    mdi = 100 * minus.ewm(alpha=1 / n, adjust=False).mean() / a
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
+    return dx.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+
+
+REGIMES = ("alta", "queda", "lateral", "volatil")
+
+
+def daily_regime(daily: pd.DataFrame) -> pd.Series:
+    """Market phase of one coin, known at the open of each day (computed on D-1's close).
+
+    volatil  ATR% above its own 1-year 90th percentile (crash / blow-off conditions)
+    alta     close > EMA200, EMA50 > EMA200 and ADX ≥ 20
+    queda    close < EMA200 and EMA50 < EMA200
+    lateral  everything else (no confirmed trend, or a weak one: ADX < 20)
+    """
+    c = daily["close"]
+    e50, e200 = ema(c, 50), ema(c, 200)
+    strength = adx(daily)
+    atr_pct = atr(daily) / c
+    hot = atr_pct > atr_pct.rolling(365, min_periods=120).quantile(0.9)
+    lab = pd.Series("lateral", index=daily.index)
+    lab[(c < e200) & (e50 < e200)] = "queda"
+    lab[(c > e200) & (e50 > e200) & (strength >= 20)] = "alta"
+    lab[hot] = "volatil"
+    lab[e200.isna()] = "lateral"
+    return lab.shift(1).fillna("lateral")
+
+
 def features(df: pd.DataFrame) -> pd.DataFrame:
     f = df.copy()
     c = f["close"]

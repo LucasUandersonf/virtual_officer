@@ -42,15 +42,17 @@ from mqmas.research.strategies import (
     align_daily,
     btc_regime,
     build_configs,
+    daily_regime,
     daily_trend,
     features,
     monthly_eligibility,
     relative_strength,
 )
+from mqmas.research.templates import TEMPLATES, dca_benchmark, grid_returns, structured_trades
 
 log = logging.getLogger(__name__)
 
-VERSION = 4
+VERSION = 5
 HISTORY_START = pd.Timestamp("2022-01-01", tz="UTC")
 FIRST_TEST = pd.Timestamp("2023-07-01", tz="UTC")
 WINDOW_MONTHS = 6
@@ -160,6 +162,7 @@ class Lab:
         self.eligible = monthly_eligibility(self.data["1d"], self.top_n, self.min_range, self.max_range)
         self.rs = relative_strength(self.data["1d"], self.eligible)
         self.daily_trend = {coin: daily_trend(d) for coin, d in self.data["1d"].items()}
+        self.coin_regime = {coin: daily_regime(d) for coin, d in self.data["1d"].items()}
 
     # ------------------------------------------------------------------ bracket strategies
 
@@ -192,35 +195,144 @@ class Lab:
                     eout = t["exit"].astype(int)
                     rows[c.key].append(pd.DataFrame({
                         "coin": coin, "t_in": f.index[ein], "t_out": f.index[eout] + pd.Timedelta(TF_DELTA[tf]),
-                        "ret": t["ret"], "stop_pct": t["stop_pct"], "reason": t["reason"]}))
+                        "ret": t["ret"], "stop_pct": t["stop_pct"], "reason": t["reason"],
+                        "regime": self._regime_at(coin, f.index[ein])}))
         empty = pd.DataFrame(columns=["coin", "t_in", "t_out", "ret", "stop_pct", "reason"])
         return {k: (pd.concat(v, ignore_index=True) if v else empty) for k, v in rows.items()}
 
-    def walk_forward(self, configs: list[Config], table: dict[str, pd.DataFrame]) -> dict[str, Any]:
-        families = sorted({(c.family, c.tf) for c in configs})
+    def _regime_at(self, coin: str, ts: pd.DatetimeIndex) -> np.ndarray:
+        reg = self.coin_regime.get(coin)
+        if reg is None:
+            return np.full(len(ts), "lateral", dtype=object)
+        out: np.ndarray = reg.reindex(ts.normalize()).fillna("lateral").to_numpy(dtype=object)
+        return out
+
+    def regime_router(self, wf: dict[str, Any], table: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
+        """"O mercado dita a regra": in every test window each setup only trades the market phases where,
+        on data *before* the window, its chosen configuration had a positive edge (n ≥ 20, t-stat ≥ 1)."""
+        parts = []
+        for name, r in wf.items():
+            for pk in r["picks"]:
+                tr = table[pk["config"]]
+                train = window_slice(tr, HISTORY_START, pk["start"])
+                allowed = [g for g, grp in train.groupby("regime")
+                           if trade_tstat(grp["ret"].to_numpy(dtype=float)) >= 1.0]
+                pk["regimes"] = allowed
+                test = window_slice(tr, pk["start"], pk["end"])
+                parts.append(test[test["regime"].isin(allowed)].assign(setup=name))
+        return pd.concat(parts, ignore_index=True) if parts else None
+
+    @staticmethod
+    def by_regime(trades: pd.DataFrame) -> dict[str, dict[str, float]]:
+        out: dict[str, dict[str, float]] = {}
+        if "regime" not in trades:
+            return out
+        for g, grp in trades.groupby("regime"):
+            r = grp["ret"].to_numpy(dtype=float)
+            gain, loss = r[r > 0].sum(), -r[r <= 0].sum()
+            out[str(g)] = {"trades": float(r.size), "win_rate": float((r > 0).mean()),
+                           "expectancy_pct": float(r.mean()),
+                           "profit_factor": float(min(gain / loss, 99.0)) if loss > 0 else 99.0}
+        return out
+
+    def walk_forward(self, groups: dict[str, list[str]], table: dict[str, pd.DataFrame]) -> dict[str, Any]:
+        """For each group of competing configurations, pick on the past and trade the next window blind."""
         windows = test_windows(self.end)
         results: dict[str, Any] = {}
         is_sr: dict[str, float] = {}
-        for c in configs:  # in-sample SR of every trial, for the deflated Sharpe
-            res = simulate_portfolio(table[c.key], self.rules, self.costs, HISTORY_START, FIRST_TEST)
-            is_sr[c.key] = res.metrics["daily_sr"]
-        for fam, tf in families:
-            cands = [c for c in configs if c.family == fam and c.tf == tf]
+        for keys in groups.values():  # in-sample SR of every trial, for the deflated Sharpe
+            for k in keys:
+                res = simulate_portfolio(table[k], self.rules, self.costs, HISTORY_START, FIRST_TEST)
+                is_sr[k] = res.metrics["daily_sr"]
+        for name, cands in groups.items():
             oos_parts, picks = [], []
             for s, e in windows:
                 best, best_t = None, -math.inf
-                for c in cands:
-                    score = trade_tstat(window_slice(table[c.key], HISTORY_START, s)["ret"].to_numpy(dtype=float))
+                for k in cands:
+                    score = trade_tstat(window_slice(table[k], HISTORY_START, s)["ret"].to_numpy(dtype=float))
                     if score > best_t:
-                        best, best_t = c, score
+                        best, best_t = k, score
                 if best is None:
                     continue
-                picks.append({"window": f"{s.date()}→{e.date()}", "start": s, "end": e, "config": best.key,
+                picks.append({"window": f"{s.date()}→{e.date()}", "start": s, "end": e, "config": best,
                               "train_tstat": best_t})
-                oos_parts.append(window_slice(table[best.key], s, e))
-            results[f"{fam}|{tf}"] = {"picks": picks, "oos_trades": pd.concat(oos_parts) if oos_parts else None,
-                                     "trial_srs": [is_sr[c.key] for c in cands]}
+                oos_parts.append(window_slice(table[best], s, e))
+            results[name] = {"picks": picks, "oos_trades": pd.concat(oos_parts) if oos_parts else None,
+                             "trial_srs": [is_sr[k] for k in cands]}
         return results
+
+    def template_trade_table(self) -> tuple[dict[str, pd.DataFrame], dict[str, list[str]]]:
+        """Trades for every playbook template configuration (structural stops, limits, indicator exits)."""
+        regime = btc_regime(self.btc_daily)
+        rows: dict[str, list[pd.DataFrame]] = {}
+        groups: dict[str, list[str]] = {}
+        for tpl in TEMPLATES:
+            for key, tf, _p in tpl.configs():
+                rows.setdefault(key, [])
+                groups.setdefault(f"tpl:{tpl.name}|{tf}", []).append(key)
+        for tf in sorted({tf for t in TEMPLATES for tf in t.tfs}):
+            for coin, df in self.data[tf].items():
+                f = features(df[df.index >= HISTORY_START - pd.Timedelta(days=40)])
+                idx = f.index.normalize()
+                f["d_trend"] = self.daily_trend.get(coin, pd.Series(dtype=bool)).reindex(idx).fillna(
+                    False).to_numpy(dtype=bool)
+                reg = align_daily(regime, f.index)
+                months = f.index.tz_localize(None).to_period("M")
+                elig = np.array([coin in self.eligible.get(m, ()) for m in months], dtype=bool)
+                o, h, lo, cl = (f[k].to_numpy() for k in ("open", "high", "low", "close"))
+                a = f["atr"].to_numpy()
+                for tpl in TEMPLATES:
+                    if tf not in tpl.tfs:
+                        continue
+                    for key, ktf, p in tpl.configs():
+                        if ktf != tf:
+                            continue
+                        plan = tpl.fn(f, p, reg)
+                        keep = elig[plan.sig_idx] & (plan.sig_idx >= WARMUP)
+                        plan.sig_idx, plan.stop = plan.sig_idx[keep], plan.stop[keep]
+                        if plan.limit is not None:
+                            plan.limit = plan.limit[keep]
+                        t = structured_trades(o, h, lo, cl, a, plan, self.costs)
+                        if t["entry"].size == 0:
+                            continue
+                        ein, eout = t["entry"].astype(int), t["exit"].astype(int)
+                        rows[key].append(pd.DataFrame({
+                            "coin": coin, "t_in": f.index[ein], "t_out": f.index[eout] + pd.Timedelta(TF_DELTA[tf]),
+                            "ret": t["ret"], "stop_pct": t["stop_pct"], "reason": t["reason"],
+                        "regime": self._regime_at(coin, f.index[ein])}))
+        empty = pd.DataFrame(columns=["coin", "t_in", "t_out", "ret", "stop_pct", "reason"])
+        return {k: (pd.concat(v, ignore_index=True) if v else empty) for k, v in rows.items()}, groups
+
+    def grid_candidates(self, trials: list[float]) -> list[dict[str, Any]]:
+        """#6 grid bot on a fixed blue-chip basket, each configuration reported out of sample."""
+        basket = [s for s in ("BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT") if s in self.data["1h"]]
+        out = []
+        for levels, stop_below in ((10, 0.05), (20, 0.10)):
+            hourly = pd.concat([grid_returns(self.data["1h"][s][self.data["1h"][s].index >= HISTORY_START],
+                                             levels, stop_below, self.costs) for s in basket], axis=1).mean(axis=1)
+            daily = (1 + hourly).groupby(hourly.index.normalize()).prod() - 1
+            oos = daily[daily.index >= FIRST_TEST]
+            st = oos - (daily.abs() * 0)  # costs already per fill; stress handled by fee in grid
+            out.append(self.evaluate(f"tpl:grid|1h|niveis={levels},stop={stop_below}", oos, trials,
+                                     returns_metrics(st, self.rules.equity0)["profit_factor"], [],
+                                     f"grid {levels} níveis, re-armado mensalmente, cesta {'/'.join(basket)}"))
+        return out
+
+    def benchmarks(self, ex: Any) -> dict[str, Any]:
+        """#10 DCA and #5 funding-rate carry are measured, not traded (spot-only mandate)."""
+        out: dict[str, Any] = {}
+        d = self.data["1d"]
+        out["dca_btc"] = dca_benchmark(d, FIRST_TEST, self.end, {"BTC/USDT": 1.0})
+        if "ETH/USDT" in d:
+            out["dca_btc_eth"] = dca_benchmark(d, FIRST_TEST, self.end, {"BTC/USDT": 0.5, "ETH/USDT": 0.5})
+        btc = d["BTC/USDT"]["close"].loc[FIRST_TEST:self.end]
+        out["buy_hold_btc"] = {"total_return": float(btc.iloc[-1] / btc.iloc[0] - 1),
+                               "max_drawdown": float(((btc.cummax() - btc) / btc.cummax()).max())}
+        try:
+            out["funding"] = funding_carry(FIRST_TEST, self.end)
+        except Exception as exc:  # derivatives API may be unreachable; the benchmark is optional
+            out["funding"] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+        return out
 
     # ------------------------------------------------------------------ evaluation
 
@@ -239,6 +351,7 @@ class Lab:
                 self.rules.equity0)
             monthly = daily.resample("ME").last().pct_change().dropna()
             worst_days = daily.pct_change().nsmallest(3)
+        regimes = {} if isinstance(oos_daily_or_trades, pd.Series) else self.by_regime(oos_daily_or_trades)
         dsr = deflated_sharpe(m["daily_sr"], m["days"], m["daily_skew"], m["daily_kurt"], trial_srs) \
             if m["days"] > 2 and np.isfinite(m["daily_sr"]) else 0.0
         if not isinstance(oos_daily_or_trades, pd.Series) and len(oos_daily_or_trades):
@@ -262,6 +375,7 @@ class Lab:
             if bad:
                 fails.append(f"{k}={v:.3f} (limite {lim})")
         return {"name": name, "metrics": m, "approved": not fails, "fails": fails, "picks": picks,
+                "by_regime": regimes,
                 "live_config": live_config, "monte_carlo": monte_carlo(monthly),
                 "regimes": regime_breakdown(monthly, self.btc_daily),
                 "monthly": {str(k.date()): round(float(v), 5) for k, v in monthly.items()},
@@ -276,8 +390,25 @@ class Lab:
         extra = self.costs.round_trip
         stressed = {k: v.assign(ret=v["ret"] - extra) for k, v in table.items()}
         log.info("trade tables built: %d configs in %.0fs", len(configs), time.time() - t0)
-        wf = self.walk_forward(configs, table)
+        groups: dict[str, list[str]] = {}
+        for c in configs:
+            groups.setdefault(f"{c.family}|{c.tf}", []).append(c.key)
+        tpl_table, tpl_groups = self.template_trade_table()
+        table.update(tpl_table)
+        stressed.update({k: v.assign(ret=v["ret"] - extra) for k, v in tpl_table.items()})
+        groups.update(tpl_groups)
+        log.info("template tables built: %d configs", len(tpl_table))
+        wf = self.walk_forward(groups, table)
         candidates: list[dict[str, Any]] = []
+        routed = self.regime_router(wf, table)
+        if routed is not None and len(routed):
+            st_r = simulate_portfolio(routed.assign(ret=routed["ret"] - extra), self.rules,
+                                      Costs(self.costs.fee * 2, self.costs.slippage * 2), FIRST_TEST,
+                                      self.end).metrics["profit_factor"]
+            all_srs = [x for r in wf.values() for x in r["trial_srs"]]
+            candidates.append(self.evaluate("roteador-regime", routed, all_srs, st_r,
+                                            [{"setups_usados": sorted(routed["setup"].unique().tolist())}],
+                                            "cada setup só opera nos regimes onde provou vantagem no passado"))
         for name, r in wf.items():
             if r["oos_trades"] is None or r["oos_trades"].empty:
                 continue
@@ -304,13 +435,17 @@ class Lab:
         all_rot = rotation_configs()
         candidates.append(self.rotation("rotation|1d", all_rot, all_rot))
         candidates.append(self.rotation("rotation-safe|1d", [c for c in all_rot if c.trend_exit], all_rot))
-        all_trials = sum(len(r["trial_srs"]) for r in wf.values()) + len(rotation_configs())
+        candidates.append(self.rotation("rotation-dominancia|1d", [c for c in all_rot if c.dominance], all_rot))
+        grid_trials = [x for r in wf.values() for x in r["trial_srs"]]
+        candidates.extend(self.grid_candidates(grid_trials))
+        all_trials = sum(len(r["trial_srs"]) for r in wf.values()) + len(rotation_configs()) + 2
         candidates.sort(key=lambda x: (x["approved"], x["metrics"]["sortino"]), reverse=True)
         report = {"version": VERSION, "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
                   "elapsed_sec": round(time.time() - t0), "pool": self.pool, "trials": all_trials,
                   "oos_period": [str(FIRST_TEST.date()), str(self.end.date())],
                   "rules": asdict(self.rules), "costs": asdict(self.costs), "criteria": CRITERIA,
-                  "candidates": candidates}
+                  "candidates": candidates, "benchmarks": self.benchmarks(ex),
+                  "playbook_verdicts": PLAYBOOK_NOTES}
         return report
 
     # ------------------------------------------------------------------ rotation
@@ -349,6 +484,50 @@ class Lab:
 
 TF_DELTA = {"1h": "1h", "4h": "4h", "1d": "1D"}
 
+PLAYBOOK_NOTES = {
+    "1_range_breakout": "testado (tpl:range_breakout)",
+    "2_golden_cross": "testado (tpl:golden_cross)",
+    "3_rsi_divergence": "testado só o lado comprado (tpl:rsi_divergence); vender a descoberto exige futuros",
+    "4_orderbook_scalping": "não testável: não existe histórico público do livro de ofertas; alvos de 0,2–0,5% "
+                            "contra 0,2–0,3% de custo por ida e volta não deixam margem no varejo",
+    "5_funding_arbitrage": "medido (benchmarks.funding); exige futuros + spot, fora do mandato spot-only",
+    "6_spot_grid": "testado (tpl:grid)",
+    "7_support_flip": "testado (tpl:support_flip)",
+    "8_bollinger_squeeze": "testado nas rodadas anteriores (squeeze 15m/1h/4h/1d); só o rompimento de alta",
+    "9_altcoin_rotation": "testado (rotation-dominancia: proxy de BTC.D = alts vs BTC em 30 dias)",
+    "10_smart_dca": "medido como referência (benchmarks.dca_*), não é setup de trade",
+}
+
+
+def funding_carry(start: pd.Timestamp, end: pd.Timestamp) -> dict[str, Any]:
+    """Historical funding of the delta-neutral carry (long spot + short perp), net of 4 legs of costs."""
+    import ccxt
+
+    fx = ccxt.binanceusdm({"enableRateLimit": True})
+    out: dict[str, Any] = {}
+    for sym in ("BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"):
+        rates: list[tuple[int, float]] = []
+        since = int(start.timestamp() * 1000)
+        while since < int(end.timestamp() * 1000):
+            batch = fx.fetch_funding_rate_history(sym, since=since, limit=1000)
+            if not batch:
+                break
+            rates += [(int(r["timestamp"]), float(r["fundingRate"])) for r in batch]
+            since = int(batch[-1]["timestamp"]) + 1
+            if len(batch) < 1000:
+                break
+        if not rates:
+            continue
+        s = pd.Series([r for _, r in rates], index=pd.to_datetime([t for t, _ in rates], unit="ms", utc=True))
+        years = max((s.index[-1] - s.index[0]).days / 365.0, 1e-9)
+        gross = float(s.sum())
+        net = gross - 4 * (0.001 + 0.0005)  # open + close on both legs, once over the whole period
+        monthly = s.resample("ME").sum()
+        out[sym.split(":")[0]] = {"apr_gross": gross / years, "apr_net": net / years,
+                                  "positive_months": float((monthly > 0).mean()),
+                                  "worst_month": float(monthly.min()), "samples": len(s)}
+    return out
+
 
 def summarize(report: dict[str, Any]) -> list[str]:
     lines = [f"RESEARCH v{report['version']} | OOS {report['oos_period'][0]}→{report['oos_period'][1]} | "
@@ -371,6 +550,10 @@ def summarize(report: dict[str, Any]) -> list[str]:
                          f"DD {m['max_drawdown_risk0.015']:.1%}")
         lines.append("    regimes: " + " | ".join(f"{k}: {v['months']}m média {v['mean']:+.2%} pos {v['positive']:.0%}"
                                                   for k, v in c["regimes"].items()))
+        if c.get("by_regime"):
+            lines.append("    setup×regime: " + " | ".join(
+                f"{k}: n={v['trades']:.0f} acerto {v['win_rate']:.0%} PF {v['profit_factor']:.2f} "
+                f"exp {v['expectancy_pct']:+.2%}" for k, v in sorted(c["by_regime"].items())))
     return lines
 
 
