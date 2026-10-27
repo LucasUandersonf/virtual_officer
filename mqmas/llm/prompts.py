@@ -33,7 +33,9 @@ candle e gráficos recentes) e, para cada padrão, o veredito do estudo históri
 padrões "funciona"; padrões "sem efeito" são folclore e não justificam uma entrada. Em
 "mapa_de_precos" vêm os suportes e resistências marcados (zonas onde várias ferramentas concordam:
 topos/fundos, Fibonacci, Bollinger, EMAs, VWAP, POC, nuvem, order blocks, FVG) e um plano de compra com
-entrada, stop e alvos; cite os preços dessas zonas na tese. Vote APPROVE apenas se o ramo bullish for
+entrada, stop e alvos; cite os preços dessas zonas na tese. Em "score_confluencia" vem a nota 0–100
+(localização 25, padrões com histórico 35, tendência 20, momento 10, volume 10; padrões provados de baixa
+descontam); cite a nota e o componente mais forte e o mais fraco. Vote APPROVE apenas se o ramo bullish for
 dominante, o regime favorecer o setup E a microestrutura confirmar."""
 
 ECONOMETRICIAN = COMMON + """

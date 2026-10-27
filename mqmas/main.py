@@ -96,8 +96,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if book:
         tasks.append(asyncio.create_task(book.run(stop), name="strategy_book"))
     runtime = Runtime(s, db, feed, router, risk, hub, positions, orch, league, book, stop, tasks)
+    tasks.append(asyncio.create_task(_sync_library(s, db), name="pattern_library"))
     if s.research_on_boot:
-        tasks.append(asyncio.create_task(_research_once(s), name="research_lab"))
+        tasks.append(asyncio.create_task(_research_once(s, db), name="research_lab"))
     try:
         yield
     finally:
@@ -116,12 +117,25 @@ def _research_root(s: Settings) -> Path:
     return s.db_path.parent / "research"
 
 
-async def _research_once(s: Settings) -> None:
+async def _sync_library(s: Settings, db: Database) -> None:
+    """Pattern catalog + measured record into SQLite (ta_patterns / ta_pattern_stats)."""
+    from mqmas.ta.catalog import catalog, stats_rows
+
+    try:
+        path = _research_root(s) / "ta_report.json"
+        study = json.loads(path.read_text()) if path.exists() else None
+        await db.sync_pattern_library(await asyncio.to_thread(catalog), stats_rows(study))
+    except Exception:
+        log.exception("pattern library sync failed")
+
+
+async def _research_once(s: Settings, db: Database) -> None:
     """Spawn the research lab in its own process (keeps the trading loop's GIL free)."""
     log.info("starting research lab subprocess (runs only the labs whose report is missing or outdated)")
     proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "mqmas.research", str(_research_root(s)), "all")
     code = await proc.wait()
     log.info("research lab finished with exit code %s", code)
+    await _sync_library(s, db)
 
 
 app = FastAPI(title="MQ-MAS", version="1.0.0", lifespan=lifespan)
@@ -240,6 +254,45 @@ async def price_levels(base: str, tf: str = "4h", quote: str = "USDT") -> dict[s
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
     df.index = pd.to_datetime(df.pop("ts").astype("int64"), unit="ms", utc=True)
     return {"symbol": symbol, "tf": tf, **await asyncio.to_thread(price_map, df.iloc[:-1].astype(float))}
+
+
+@app.get("/api/confluence/{base}")
+async def confluence_score(base: str, tf: str = "4h", quote: str = "USDT") -> dict[str, Any]:
+    """Confluence score (0–100) of BASE/QUOTE, its components, the price map and the order it implies."""
+    from mqmas.ta.confluence import live_score, order_proposal
+    from mqmas.ta.levels import price_map
+    from mqmas.ta.live import load_study
+
+    rt = _rt()
+    if tf not in ("4h", "1d"):
+        raise HTTPException(400, "tf must be 4h or 1d")
+    ex = rt.feed.exchange
+    if ex is None:
+        raise HTTPException(503, "no exchange connection (synthetic feed)")
+    symbol = f"{base.upper()}/{quote.upper()}"
+    rows = await ex.fetch_ohlcv(symbol, tf, limit=400)
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df.index = pd.to_datetime(df.pop("ts").astype("int64"), unit="ms", utc=True)
+    df = df.iloc[:-1].astype(float)
+    root = _research_root(rt.settings)
+    sc, pm = await asyncio.to_thread(lambda: (live_score(df, load_study(root), tf), price_map(df)))
+    path = root / "confluence_report.json"
+    validation = json.loads(path.read_text()) if path.exists() else None
+    prop = order_proposal(sc, tf, validation, await rt.risk.equity_estimate(), rt.settings.book_risk_per_trade, pm)
+    return {"symbol": symbol, "tf": tf, "confluencia": sc, "proposta": prop, "mapa_de_precos": pm,
+            "validacao": (validation or {}).get("tf", {}).get(tf)}
+
+
+@app.get("/api/patterns")
+async def pattern_library(tf: str | None = None) -> dict[str, Any]:
+    """The pattern library: definition, parameters and measured record of every pattern."""
+    return {"patterns": await _rt().db.pattern_library(tf)}
+
+
+@app.get("/api/ta-signals")
+async def ta_signals(limit: int = 50, min_score: float = 0.0) -> dict[str, Any]:
+    """Audit trail of the confluence scans (every coin, every 4h/1d close)."""
+    return {"signals": await _rt().db.recent_ta_signals(min(limit, 500), min_score)}
 
 
 @app.get("/api/ta-study")

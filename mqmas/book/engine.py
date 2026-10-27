@@ -40,6 +40,7 @@ from mqmas.llm.router import LLMRouter
 from mqmas.models import AgentMessage, AgentRole, CroOpinion, ExitReason, Position, PositionStatus, Vote
 from mqmas.persistence.db import Database
 from mqmas.research.data import EXCLUDED_BASES, LEVERAGED_SUFFIXES, TF_MS
+from mqmas.research.engine import Exit
 from mqmas.research.strategies import (
     FAMILIES,
     WARMUP,
@@ -52,7 +53,9 @@ from mqmas.research.strategies import (
     relative_strength,
 )
 from mqmas.risk.constraints import RiskManager
-from mqmas.ta.live import agent_view
+from mqmas.ta.confluence import RULE, live_score, order_proposal
+from mqmas.ta.levels import compact_map, price_map
+from mqmas.ta.live import agent_view, load_study
 from mqmas.ws.hub import WebSocketHub
 
 log = logging.getLogger(__name__)
@@ -62,6 +65,7 @@ EVAL_GRACE_SEC = 90  # wait for the exchange to publish the closed candle
 MAX_SIGNAL_LAG_MS = 4 * 3_600_000  # a daily signal is only actionable within 4h of the close (≈ next open)
 DAILY_BARS = 400
 SETUP_PREFIX = "book:"
+SCORE_TFS = ("4h", "1d")
 
 
 @dataclass
@@ -73,6 +77,8 @@ class Signal:
     rs: float
     layers: dict[str, Any]
     ta: dict[str, Any] = field(default_factory=dict)
+    cfg: Config | None = None  # set for confluence-score entries (not in the research strategy table)
+    evidence: str = "aprovado no walk-forward 2023-07→2026-10: PF 2,29, acerto 56%, DD 2,9%"
 
 
 @dataclass
@@ -83,6 +89,11 @@ class BookState:
     btc_regime_ok: bool | None = None
     last_run: str | None = None
     notes: list[str] = field(default_factory=list)
+    confluence: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _score_and_map(df: pd.DataFrame, study: dict[str, Any] | None, tf: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    return live_score(df, study, tf), price_map(df)
 
 
 def short_name(cfg: Config) -> str:
@@ -149,8 +160,8 @@ class StrategyBook:
 
     # ------------------------------------------------------------------ evaluation
 
-    def _due(self, tf: str, now_ms: int) -> int | None:
-        step = TF_MS[tf]
+    def _due(self, tf: str, now_ms: int, step: int | None = None) -> int | None:
+        step = step or TF_MS[tf]
         closed = (now_ms - EVAL_GRACE_SEC * 1000) // step * step  # open time of the bar that just closed + step
         if self.state.last_eval.get(tf) == closed:
             return None
@@ -218,6 +229,64 @@ class StrategyBook:
         await self._hub.publish("book", self.snapshot_light())
         return actionable
 
+    # ------------------------------------------------------------------ confluence score
+
+    def _validation(self) -> dict[str, Any] | None:
+        path = self._s.db_path.parent / "research" / "confluence_report.json"
+        try:
+            data = json.loads(path.read_text()) if path.exists() else None
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    async def scan_confluence(self, now_ms: int | None = None) -> list[Signal]:
+        """Score every coin of the universe at each 4h/1d close; log it; return the validated entries."""
+        now_ms = now_ms or int(time.time() * 1000)
+        if not self.state.universe:
+            return []
+        root = self._s.db_path.parent / "research"
+        study, validation = load_study(root), self._validation()
+        equity = await self._risk.equity_estimate()
+        out: list[Signal] = []
+        for tf in SCORE_TFS:
+            closed = self._due(f"score:{tf}", now_ms, TF_MS[tf])
+            if closed is None:
+                continue
+            rows = []
+            for sym in self.state.universe:
+                try:
+                    df = await self._ohlcv(sym, tf, DAILY_BARS)
+                    if len(df) < WARMUP + 50:
+                        continue
+                    sc, pm = await asyncio.to_thread(_score_and_map, df, study, tf)
+                except Exception:
+                    log.exception("book: confluence scan failed for %s %s", sym, tf)
+                    continue
+                prop = order_proposal(sc, tf, validation, equity, self._s.book_risk_per_trade, pm)
+                await self._db.save_ta_signal(df.index[-1].isoformat(), sym, tf, sc["score"], sc["componentes"],
+                                              sc["padroes_com_historico"], compact_map(pm), prop["decisao"],
+                                              prop["ordem"])
+                rows.append({"symbol": sym, "tf": tf, "score": sc["score"], "decisao": prop["decisao"],
+                             "motivo": prop["motivo"], "componentes": sc["componentes"], "ordem": prop["ordem"],
+                             "alertas": prop["alertas"]})
+                if prop["decisao"] == "EXECUTAR":
+                    th = prop["limiar"]
+                    cfg = Config("score", tf, (("limiar", th),),
+                                 Exit(RULE.stop_atr, RULE.stop_atr * RULE.target_r, None, RULE.hold_for(tf)))
+                    v = (validation or {})["tf"][tf]
+                    best = next(r for r in v["linhas"] if r["limiar"] == th)["periodo2"]
+                    out.append(Signal(sym, cfg.key, sc["preco"], sc["atr"], sc["score"],
+                                      {"score": sc["score"], "componentes": sc["componentes"]},
+                                      {"confluencia": sc, "mapa_de_precos": compact_map(pm), "alertas": prop["alertas"]},
+                                      cfg=cfg, evidence=(f"score ≥ {th} validado fora da amostra: {best['trades']} "
+                                                         f"trades, acerto {best['acerto']}, PF {best['pf']}")))
+            self.state.last_eval[f"score:{tf}"] = closed
+            self.state.confluence = sorted(rows + [r for r in self.state.confluence if r["tf"] != tf],
+                                           key=lambda r: -r["score"])[:20]
+            log.info("book: confluence %s scored %d coins → %d entry(ies)", tf, len(rows),
+                     sum(r["decisao"] == "EXECUTAR" for r in rows))
+        return out
+
     # ------------------------------------------------------------------ entries
 
     def _ta(self, df: pd.DataFrame, tf: str) -> dict[str, Any]:
@@ -231,7 +300,7 @@ class StrategyBook:
         payload = {"ativo": sig.symbol, "setup": short_name(cfg), "preco": sig.price,
                    "stop": round(stop, 8), "alvo": round(target, 8), "camadas_confluencia": sig.layers,
                    "regime_btc_ok": self.state.btc_regime_ok, "analise_tecnica": sig.ta,
-                   "evidencia": "aprovado no walk-forward 2023-07→2026-10: PF 2,29, acerto 56%, DD 2,9%"}
+                   "evidencia": sig.evidence}
         res = await self.cro.ask(payload, CroOpinion)
         if res is None:
             return False, "LLMs indisponíveis — fail-closed, sem entrada.", "rules"
@@ -260,13 +329,15 @@ class StrategyBook:
                     break
                 if any(p.symbol == sig.symbol for p in active):
                     continue
-                cfg = known[sig.strategy]
+                cfg = sig.cfg or known[sig.strategy]
                 ex = cfg.exit
                 stop = sig.price - ex.stop_atr * sig.atr
                 target = sig.price + ex.target_atr * sig.atr if ex.target_atr else sig.price * 10
                 if stop <= 0:
                     continue
                 await self._say(AgentRole.CHIEF_QUANT,
+                                f"Score de confluência {sig.layers.get('score')} em {sig.symbol} ({cfg.tf}): "
+                                f"{sig.layers.get('componentes')}." if sig.cfg else
                                 f"Confluência em {sig.symbol} ({short_name(cfg)}): tendência diária ✔, regime BTC ✔, "
                                 f"gatilho ✔, extras {sig.layers}.")
                 ok, text, provider = await self._cro_veto(sig, cfg, stop, target)
@@ -372,7 +443,8 @@ class StrategyBook:
     def snapshot_light(self) -> dict[str, Any]:
         return {"strategies": [short_name(c) for c in self.strategies], "universe": self.state.universe,
                 "btc_regime_ok": self.state.btc_regime_ok, "last_run": self.state.last_run,
-                "last_signals": self.state.last_signals[:10], "notes": self.state.notes}
+                "last_signals": self.state.last_signals[:10], "notes": self.state.notes,
+                "confluence": self.state.confluence[:10]}
 
     async def snapshot(self) -> dict[str, Any]:
         return {**self.snapshot_light(), "risk_per_trade": self._s.book_risk_per_trade,
@@ -389,6 +461,7 @@ class StrategyBook:
                 await self.supervise()
                 signals = await self.evaluate()
                 await self.try_entries(signals)
+                await self.try_entries(await self.scan_confluence())
             except Exception:
                 log.exception("book cycle failed")
             try:

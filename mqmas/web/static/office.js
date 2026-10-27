@@ -371,6 +371,22 @@ function renderBook(b) {
   $("bk-signals").textContent = sigs.length
     ? `Últimos sinais (${when}): ${sigs.map((x) => x.symbol).join(", ")}`
     : `Última análise: ${when} · nenhum sinal${(b.notes || []).length ? " · " + b.notes.join("; ") : ""}`;
+  const conf = b.confluence || [];
+  if (conf.length) {
+    const cl = $("bk-conf");
+    cl.replaceChildren();
+    for (const c of conf.slice(0, 6)) {
+      const cls = c.decisao === "EXECUTAR" ? "ok" : (c.score >= 60 ? "mid" : "no");
+      const li = el("li", `lg-row ${cls}`);
+      const name = el("div", "lg-name");
+      const title = el("strong", "", `${c.symbol} · ${c.tf}`);
+      title.append(el("span", `lg-badge ${cls}`, c.decisao));
+      const o = c.ordem || {};
+      name.append(title, el("span", "", `${c.motivo} · entrada ${fmt(o.entrada, 4)} · stop ${fmt(o.stop, 4)} · alvo ${fmt(o.alvo, 4)}`));
+      li.append(el("span", "lg-rank mono", String(Math.round(c.score))), name);
+      cl.append(li);
+    }
+  }
   if (!b.open_positions) return;
   const list = $("bk-pos");
   list.replaceChildren();

@@ -81,6 +81,42 @@ CREATE TABLE IF NOT EXISTS candles (
     PRIMARY KEY (symbol, timeframe, ts)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS ta_patterns (
+    id         TEXT PRIMARY KEY,
+    categoria  TEXT NOT NULL,
+    direcao    TEXT NOT NULL,           -- alta | baixa | neutro
+    familia    TEXT,
+    parametros TEXT NOT NULL            -- JSON: Fibonacci ratios, tolerances, trigger rule
+);
+
+CREATE TABLE IF NOT EXISTS ta_pattern_stats (
+    pattern_id    TEXT NOT NULL REFERENCES ta_patterns(id),
+    timeframe     TEXT NOT NULL,
+    veredito      TEXT,
+    ocorrencias   INTEGER,
+    acerto        REAL,                 -- net of the coin's drift
+    acerto_bruto  REAL,                 -- raw, as most websites report it
+    excesso_bps   REAL,
+    pf_operacao   REAL,
+    atualizado_em TEXT NOT NULL,
+    PRIMARY KEY (pattern_id, timeframe)
+);
+
+CREATE TABLE IF NOT EXISTS ta_signals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,          -- close time of the scanned bar
+    symbol      TEXT NOT NULL,
+    timeframe   TEXT NOT NULL,
+    score       REAL NOT NULL,
+    componentes TEXT NOT NULL,          -- JSON
+    padroes     TEXT NOT NULL,          -- JSON: active patterns with their weight
+    mapa        TEXT NOT NULL,          -- JSON: support/resistance zones
+    decisao     TEXT NOT NULL,
+    ordem       TEXT NOT NULL,          -- JSON: entry, stop, target, size
+    UNIQUE (symbol, timeframe, ts)
+);
+CREATE INDEX IF NOT EXISTS ix_ta_signals_score ON ta_signals(score);
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -288,6 +324,52 @@ class Database:
 
 
     # ------------------------------------------------------------------ candle history (Setup League)
+
+    async def sync_pattern_library(self, patterns: list[dict[str, Any]], stats: list[dict[str, Any]]) -> None:
+        now = _iso(datetime.now(timezone.utc))
+        async with self._lock:
+            await self.conn.executemany(
+                "INSERT INTO ta_patterns(id, categoria, direcao, familia, parametros) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET categoria=excluded.categoria, direcao=excluded.direcao, "
+                "familia=excluded.familia, parametros=excluded.parametros",
+                [(p["id"], p["categoria"], p["direcao"], p["familia"], json.dumps(p["parametros"], ensure_ascii=False))
+                 for p in patterns])
+            known = {p["id"] for p in patterns}
+            await self.conn.executemany(
+                "INSERT OR REPLACE INTO ta_pattern_stats(pattern_id, timeframe, veredito, ocorrencias, acerto, "
+                "acerto_bruto, excesso_bps, pf_operacao, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)",
+                [(r["pattern_id"], r["timeframe"], r["veredito"], r["ocorrencias"], r["acerto"], r["acerto_bruto"],
+                  r["excesso_bps"], r["pf_operacao"], now) for r in stats if r["pattern_id"] in known])
+            await self.conn.commit()
+
+    async def pattern_library(self, timeframe: str | None = None) -> list[dict[str, Any]]:
+        sql = ("SELECT p.id, p.categoria, p.direcao, p.familia, p.parametros, s.timeframe, s.veredito, s.ocorrencias, "
+               "s.acerto, s.acerto_bruto, s.excesso_bps, s.pf_operacao FROM ta_patterns p "
+               "LEFT JOIN ta_pattern_stats s ON s.pattern_id = p.id" + (" AND s.timeframe = ?" if timeframe else "")
+               + " ORDER BY p.categoria, p.id")
+        async with self.conn.execute(sql, (timeframe,) if timeframe else ()) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+        for r in rows:
+            r["parametros"] = json.loads(r["parametros"])
+        return rows
+
+    async def save_ta_signal(self, ts: str, symbol: str, timeframe: str, score: float, components: dict[str, Any],
+                             patterns: list[dict[str, Any]], levels: dict[str, Any], decision: str,
+                             order: dict[str, Any]) -> None:
+        await self._write(
+            "INSERT OR IGNORE INTO ta_signals(ts, symbol, timeframe, score, componentes, padroes, mapa, decisao, ordem) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (ts, symbol, timeframe, score, json.dumps(components), json.dumps(patterns, ensure_ascii=False),
+             json.dumps(levels, ensure_ascii=False), decision, json.dumps(order, ensure_ascii=False)))
+
+    async def recent_ta_signals(self, limit: int = 50, min_score: float = 0.0) -> list[dict[str, Any]]:
+        async with self.conn.execute("SELECT * FROM ta_signals WHERE score >= ? ORDER BY ts DESC, score DESC LIMIT ?",
+                                     (min_score, limit)) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+        for r in rows:
+            for k in ("componentes", "padroes", "mapa", "ordem"):
+                r[k] = json.loads(r[k])
+        return rows
 
     async def last_candle_ts(self, symbol: str, timeframe: str) -> int | None:
         async with self.conn.execute(

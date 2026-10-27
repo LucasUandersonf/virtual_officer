@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from mqmas.ta.candles import BEARISH, BULLISH, NEUTRAL, candle_patterns
+from mqmas.ta.elliott import BEARISH_EW, BULLISH_EW, elliott_events
 from mqmas.ta.indicators import all_indicators, volume_profile
 from mqmas.ta.structure import BEARISH_STRUCT, BULLISH_STRUCT, structure_events
 from mqmas.ta.worklist import worklist, worklist_bias
@@ -73,13 +74,14 @@ IND_BULLISH = ("golden_cross", "macd_cruza_alta", "rsi_sai_sobrevenda", "estocas
 IND_BEARISH = ("death_cross", "macd_cruza_baixa", "rsi_sai_sobrecompra", "estocastico_baixa_sobrecompra",
                "cci_sai_de_cima", "roc_vira_negativo", "adx_tendencia_baixa", "sar_vira_baixa", "ichimoku_perde_nuvem",
                "ichimoku_tk_baixa", "ttm_squeeze_dispara_baixa", "obv_cruza_baixa", "vwap_perde")
-BULL = set(BULLISH) | set(BULLISH_STRUCT) | set(IND_BULLISH)
-BEAR = set(BEARISH) | set(BEARISH_STRUCT) | set(IND_BEARISH)
+BULL = set(BULLISH) | set(BULLISH_STRUCT) | set(IND_BULLISH) | set(BULLISH_EW)
+BEAR = set(BEARISH) | set(BEARISH_STRUCT) | set(IND_BEARISH) | set(BEARISH_EW)
 CATEGORY = {**{k: "candle" for k in BULLISH + BEARISH + NEUTRAL},
             **{k: "estrutura" for k in ("bos_alta", "bos_baixa", "choch_alta", "choch_baixa", "ob_alta_reteste",
                                         "ob_baixa_reteste", "fvg_alta_reteste", "fvg_baixa_reteste",
                                         "varredura_fundo", "varredura_topo")},
-            **{k: "indicador" for k in IND_BULLISH + IND_BEARISH}}
+            **{k: "indicador" for k in IND_BULLISH + IND_BEARISH},
+            **{k: "ondas de Elliott" for k in BULLISH_EW + BEARISH_EW}}
 
 
 def is_bull(name: str) -> bool:
@@ -98,7 +100,7 @@ def all_events(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, Any]:
     f = all_indicators(df)
     cp = candle_patterns(df)
     struct, state = structure_events(df)
-    ev = pd.concat([cp, struct, indicator_events(df, f), worklist(df, f, cp, struct)], axis=1)
+    ev = pd.concat([cp, struct, indicator_events(df, f), elliott_events(df), worklist(df, f, cp, struct)], axis=1)
     return ev, f, state
 
 

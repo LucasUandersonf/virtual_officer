@@ -54,3 +54,30 @@ def test_negative_control_is_rejected(tmp_path):
     rep = _make(tmp_path, planted=False)
     row = next(r for r in rep["rows"] if r["padrao"] == "controle_alta" and r["tf"] == "4h")
     assert row["veredito"] == "sem efeito", row
+
+
+def _confluence(tmp_path: Path, planted: bool) -> dict:
+    from mqmas.research import confluence_study
+
+    study = _make(tmp_path, planted)
+    rng = np.random.default_rng(42)  # same draws as _make, to rebuild the event marks
+    n = 24 * 365 * 4
+    rng.normal(0, 0.004, n)
+    bars = np.sort(rng.choice(np.arange(24 * 60, n - 48, 4), size=900, replace=False))
+    marks = set((pd.Timestamp("2022-01-01", tz="UTC") + pd.to_timedelta(bars + 3, unit="h")).floor("4h"))
+
+    def events(df: pd.DataFrame):
+        f = all_indicators(df)
+        return pd.DataFrame({"controle_alta": [t in marks for t in df.index]}, index=df.index), f, None
+
+    return confluence_study.run(tmp_path, events_fn=events, study=study)
+
+
+def test_confluence_score_validates_a_real_edge(tmp_path):
+    rep = _confluence(tmp_path, planted=True)
+    assert rep["tf"]["4h"]["validado"], rep["tf"]["4h"]
+
+
+def test_confluence_score_rejects_noise(tmp_path):
+    rep = _confluence(tmp_path, planted=False)
+    assert not rep["tf"]["4h"]["validado"], rep["tf"]["4h"]

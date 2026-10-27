@@ -101,3 +101,49 @@ async def test_cro_veto_and_llm_outage_block_entries(settings):
     db, _, book = await make(settings, LLMRouter([]))  # no LLM at all → fail-closed
     assert await book.try_entries([signal()]) == []
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_confluence_scan_logs_every_coin_and_enters_on_a_validated_crossing(settings):
+    import numpy as np
+
+    from mqmas.ta.confluence import live_score
+
+    db, ex, book = await make(settings, cro_router("APPROVE"))
+    n, step = 400, 4 * 3_600_000
+    start = (int(datetime.now(timezone.utc).timestamp() * 1000) // step - n - 1) * step
+    for seed in range(50):  # a market whose last bar raised the score
+        rng = np.random.default_rng(seed)
+        c = 100 * np.exp(np.cumsum(rng.normal(0.001, 0.01, n)))
+        o = np.r_[c[0], c[:-1]]
+        rows = [[start + i * step, o[i], max(o[i], c[i]) * 1.004, min(o[i], c[i]) * 0.996, c[i], 100.0 + i]
+                for i in range(n)]
+        import pandas as pd
+        df = pd.DataFrame([r[1:] for r in rows], columns=["open", "high", "low", "close", "volume"],
+                          index=pd.to_datetime([r[0] for r in rows], unit="ms", utc=True))
+        sc = live_score(df, None, "4h")
+        if sc["score"] > sc["score_anterior"] + 1:
+            break
+    th = sc["score"] - 0.5
+    (settings.db_path.parent / "research").mkdir(parents=True, exist_ok=True)
+    (settings.db_path.parent / "research" / "confluence_report.json").write_text(json.dumps({"tf": {
+        "4h": {"limiar": th, "linhas": [{"limiar": th, "periodo2": {"trades": 80, "acerto": 0.5, "pf": 1.4}}]},
+        "1d": {"limiar": None, "linhas": []}}}))
+
+    async def fetch_ohlcv(sym, tf, limit=400):
+        return rows
+
+    ex.fetch_ohlcv = fetch_ohlcv
+    ex.px["SOL/USDT"] = float(c[-1])
+    book.state.universe = ["SOL/USDT"]
+    signals = await book.scan_confluence()
+    assert [s.symbol for s in signals] == ["SOL/USDT"]
+    logged = await db.recent_ta_signals()
+    assert {r["timeframe"] for r in logged} == {"4h", "1d"} and logged[0]["ordem"]["risco_retorno"] == "1:2"
+    [pos] = await book.try_entries(signals)
+    atr = signals[0].atr
+    assert pos.stop_price == pytest.approx(signals[0].price - 1.5 * atr)
+    assert pos.take_profit_price == pytest.approx(signals[0].price + 3.0 * atr)
+    assert pos.setup.startswith("book:score-4h")
+    assert await book.scan_confluence() == []  # same closed bar: not scanned twice
+    await db.close()

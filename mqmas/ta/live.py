@@ -60,6 +60,10 @@ def compact(rep: dict[str, Any]) -> dict[str, Any]:
 
 def agent_view(df: pd.DataFrame, tf: str, root: Path) -> dict[str, Any]:
     """What the agents receive: the compact analysis plus the marked price levels and a long plan."""
+    from mqmas.ta.confluence import live_score
     from mqmas.ta.levels import compact_map, price_map
 
-    return {"leitura": compact(report(df, tf, root)), "mapa_de_precos": compact_map(price_map(df))}
+    sc = live_score(df, load_study(root), tf)
+    return {"leitura": compact(report(df, tf, root)), "mapa_de_precos": compact_map(price_map(df)),
+            "score_confluencia": {"score": sc["score"], "componentes": sc["componentes"],
+                                  "penalidade": sc["penalidade"], "padroes_com_historico": sc["padroes_com_historico"]}}
