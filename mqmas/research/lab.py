@@ -333,7 +333,8 @@ def summarize(report: dict[str, Any]) -> list[str]:
             f"mediana {m['monthly_median']:+.2%} pior {m['monthly_worst']:+.2%} meses+ {m['positive_months']:.0%} | "
             f"trades {m['trades']:.0f} acerto {m['win_rate']:.0%} PF {m['profit_factor']:.2f} payoff {m['payoff']:.2f} "
             f"DD {m['max_drawdown']:.1%} Sharpe {m['sharpe']:.2f} Sortino {m['sortino']:.2f} DSR {m['dsr']:.2f} "
-            f"PFx2custo {m['stressed_profit_factor']:.2f} capmin ${m.get('min_capital_usd', 0):.0f} | MC DD95 {c['monte_carlo'].get('dd_p95', 0):.1%} "
+            f"PFx2custo {m['stressed_profit_factor']:.2f} capmin ${m.get('min_capital_usd', 0):.0f} | "
+            f"MC DD95 {c['monte_carlo'].get('dd_p95', 0):.1%} "
             f"ano p5 {c['monte_carlo'].get('year_p5', 0):+.1%} | falhas: {'; '.join(c['fails']) or '-'}")
         lines.append(f"    config ao vivo: {c['live_config']}")
         lines.append("    regimes: " + " | ".join(f"{k}: {v['months']}m média {v['mean']:+.2%} pos {v['positive']:.0%}"
