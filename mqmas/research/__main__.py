@@ -1,5 +1,5 @@
 """``python -m mqmas.research [root] [lab|swing|season|ta|conf|port|acct|swingbook|classic|tcc|livro|cross|arena|talib|
-trend|all]``.
+trend|waves|all]``.
 
 Runs the labs whose report is missing or outdated."""
 
@@ -179,6 +179,16 @@ def main() -> None:
             for line in trend_study.summarize(rep):
                 log.info(line)
             log.info("trend report saved to %s", path)
+    if which in ("waves", "all"):
+        from mqmas.research import waves
+
+        path = root / "waves_report.json"
+        if which == "waves" or not _current(path, waves.VERSION):
+            rep = waves.run(root)
+            path.write_text(json.dumps(rep, default=str, ensure_ascii=False))
+            for line in waves.summarize(rep):
+                log.info(line)
+            log.info("waves report saved to %s", path)
 
 
 if __name__ == "__main__":

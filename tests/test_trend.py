@@ -308,3 +308,18 @@ async def test_turning_the_kill_switch_off_resumes(trend_settings):
     rep = await TrendAllocator(trend_settings, db, ex).run_once(NOW + 3_600_000)
     assert rep["halted"] is None and rep["holdings"]
     await db.close()
+
+
+def test_event_study_measures_what_follows_a_big_day():
+    from mqmas.research.waves import event_study
+
+    idx = pd.date_range("2024-01-01", periods=60, freq="1D", tz="UTC")
+    c = pd.Series(100.0, index=idx)
+    c.iloc[30:] = 125.0  # +25 % on day 30, then flat
+    c.iloc[35:] = 137.5  # +10 % more five days later: continuation
+    closes = pd.DataFrame({f"C{i}/USDT": c for i in range(5)})  # the study needs at least 5 events
+    elig = pd.DataFrame(True, index=idx, columns=closes.columns)
+    ev = event_study(closes, elig, idx[0], Costs(fee=0.0, slippage=0.0))
+    assert ev["+20%"]["eventos"] == 5
+    assert ev["+20%"]["5d"]["media"] == pytest.approx(0.10)
+    assert ev["+20%"]["1d"]["media"] == pytest.approx(0.0)
