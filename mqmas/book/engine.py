@@ -34,6 +34,7 @@ import pandas as pd
 
 from mqmas.agents.cro import ChiefRiskOfficer
 from mqmas.agents.personas import PERSONAS
+from mqmas.book import swing
 from mqmas.config import Settings, TradingMode
 from mqmas.data.market_feed import with_backoff
 from mqmas.execution.spot import Fill, OrderRefused, SpotExecutor, client_id
@@ -86,6 +87,13 @@ class Signal:
     ta: dict[str, Any] = field(default_factory=dict)
     cfg: Config | None = None  # set for confluence-score entries (not in the research strategy table)
     evidence: str = "aprovado no walk-forward 2023-07→2026-10: PF 2,29, acerto 56%, DD 2,9%"
+    risk: float | None = None  # swing: stop distance from the signal close, re-anchored on the fill
+    target_r: float = 0.0  # swing: target in R multiples (0 = trailing only)
+    meta: str = ""  # extra setup metadata stored with the position
+
+
+def tf_ms(tf: str) -> int:
+    return TF_MS.get(tf) or swing.DAYS[tf] * TF_MS["1d"]
 
 
 @dataclass
@@ -180,7 +188,8 @@ class StrategyBook:
     async def evaluate(self, now_ms: int | None = None) -> list[Signal]:
         now_ms = now_ms or int(time.time() * 1000)
         due = {c.tf for c in self.strategies if self._due(c.tf, now_ms) is not None}
-        if not due:
+        swing_closed = self._due("swing", now_ms, TF_MS["1d"]) if self._s.book_swing else None
+        if not due and swing_closed is None:
             return []
         pool = await self._pool()
         daily: dict[str, pd.DataFrame] = {}
@@ -203,6 +212,12 @@ class StrategyBook:
         self.state.universe = universe
         self.state.btc_regime_ok = bool(regime.iloc[-1]) if len(regime) else None
         signals: list[Signal] = []
+        stale: list[str] = []
+        if swing_closed is not None:
+            signals += await self._swing(daily, universe, rs)
+            self.state.last_eval["swing"] = swing_closed
+            if now_ms - swing_closed > MAX_SIGNAL_LAG_MS:
+                stale.append("swing")
         for tf in sorted(due):
             cfgs = [c for c in self.strategies if c.tf == tf]
             for sym in universe:
@@ -228,16 +243,75 @@ class StrategyBook:
                                               self._ta(df, tf), evidence=EVIDENCE.get(c.family, EVIDENCE["confluence"])))
             self.state.last_eval[tf] = self._due(tf, now_ms) or self.state.last_eval.get(tf, 0)
         signals.sort(key=lambda x: x.rs, reverse=True)
-        stale = [tf for tf in due if now_ms - self.state.last_eval.get(tf, 0) > min(TF_MS[tf] // 6, MAX_SIGNAL_LAG_MS)]
+        stale += [tf for tf in due if now_ms - self.state.last_eval.get(tf, 0) > min(TF_MS[tf] // 6, MAX_SIGNAL_LAG_MS)]
         self.state.notes = [f"sinais {tf} só para leitura: o candle fechou há muito tempo (o teste entra na abertura "
                             f"seguinte)" for tf in stale]
-        actionable = [s for s in signals if config_by_key()[s.strategy].tf not in stale]
-        self.state.last_signals = [{"symbol": s.symbol, "strategy": short_name(config_by_key()[s.strategy]),
+        known = config_by_key()
+        actionable = [s for s in signals
+                      if ("swing" if s.risk is not None else (s.cfg or known[s.strategy]).tf) not in stale]
+        self.state.last_signals = [{"symbol": s.symbol, "strategy": short_name(s.cfg or known[s.strategy]),
                                     "price": s.price, **s.layers} for s in signals]
         self.state.last_run = datetime.now(timezone.utc).isoformat()
-        log.info("book: evaluated %s on %d coins → %d signal(s)", ",".join(sorted(due)), len(universe), len(signals))
+        log.info("book: evaluated %s on %d coins → %d signal(s)",
+                 ",".join(sorted(due) + (["swing 1d/2d/3d"] if swing_closed is not None else [])), len(universe),
+                 len(signals))
         await self._hub.publish("book", self.snapshot_light())
         return actionable
+
+    # ------------------------------------------------------------------ swing 1d / 2d / 3d
+
+    async def _swing(self, daily: dict[str, pd.DataFrame], universe: list[str], rs: pd.DataFrame) -> list[Signal]:
+        """At each daily close: manage the open swing positions, then look for new entries."""
+        found: dict[str, dict[str, dict[str, Any]]] = {}
+        out: list[Signal] = []
+        held = {p.symbol for p in await self.positions() if self._meta(p).get("mgmt")}
+        for sym in sorted(set(universe) | held):
+            try:
+                d = daily[sym] if sym in daily else await self._ohlcv(sym, "1d", DAILY_BARS)
+                hits, mgmt = await asyncio.to_thread(swing.scan, d)
+            except Exception:
+                log.exception("book: swing scan failed for %s", sym)
+                continue
+            found[sym] = mgmt
+            if sym not in universe:
+                continue
+            r = rs[sym].iloc[-1] if sym in rs.columns and len(rs) else np.nan
+            for h in hits:
+                s = h.setup
+                out.append(Signal(sym, h.cfg.key, h.price, h.atr, float(r) if np.isfinite(r) else 0.0, h.layers,
+                                  cfg=h.cfg, evidence=swing.EVIDENCE[(s["tf"], s["nome"])], risk=h.risk,
+                                  target_r=s["alvo_r"], meta=f"|mgmt=be2r|tf={s['tf']}|r={h.risk:.8g}"))
+        await self._swing_manage(found)
+        out.sort(key=lambda x: x.rs, reverse=True)
+        return out
+
+    async def _swing_manage(self, found: dict[str, dict[str, dict[str, Any]]]) -> None:
+        """Closed candle of a swing position's timeframe: refresh ATR / low of the last 3, exit on a bearish pattern."""
+        for p in await self.positions():
+            meta = self._meta(p)
+            m = found.get(p.symbol, {}).get(meta.get("tf", ""))
+            if not meta.get("mgmt") or m is None or p.status is not PositionStatus.OPEN:
+                continue
+            self._set_meta(p, atr=f"{m['atr']:.8g}", low3=f"{m['low3']:.8g}")
+            await self._db.update_position(p)
+            if m["exit"]:
+                await self._say(AgentRole.EXECUTION, f"Padrão de reversão de baixa no candle {meta['tf']} de "
+                                                     f"{p.symbol}: saída na abertura, como no teste.")
+                await self._exit_now(p, ExitReason.SIGNAL_EXIT)
+
+    @staticmethod
+    def _set_meta(p: Position, **kv: str) -> None:
+        parts = [x for x in (p.setup or "").split("|") if x.split("=", 1)[0] not in kv]
+        p.setup = "|".join(parts + [f"{k}={v}" for k, v in kv.items()])
+
+    async def _exit_now(self, p: Position, reason: ExitReason) -> None:
+        if p.mode == "live" and self._live and self._spot is not None:
+            f = await self._spot.sell_all(p.symbol, p.quantity, p.stop_order_id, urgent=True)
+            await self._finish(p, reason, f.avg_price, f.fee_usdt)
+            return
+        t = await with_backoff(lambda: self._ex.fetch_ticker(p.symbol), f"ticker {p.symbol}")
+        bid = float(t.get("bid") or t.get("last") or p.entry_price)
+        await self._close(p, reason, bid * (1 - self._s.max_slippage_pct))
 
     # ------------------------------------------------------------------ confluence score
 
@@ -341,11 +415,18 @@ class StrategyBook:
                     continue
                 cfg = sig.cfg or known[sig.strategy]
                 ex = cfg.exit
-                stop = sig.price - ex.stop_atr * sig.atr
-                target = sig.price + ex.target_atr * sig.atr if ex.target_atr else sig.price * 10
+                if sig.risk is not None:
+                    stop = sig.price - sig.risk
+                    target = sig.price + sig.target_r * sig.risk if sig.target_r else sig.price * 10
+                else:
+                    stop = sig.price - ex.stop_atr * sig.atr
+                    target = sig.price + ex.target_atr * sig.atr if ex.target_atr else sig.price * 10
                 if stop <= 0:
                     continue
                 await self._say(AgentRole.CHIEF_QUANT,
+                                f"Swing {sig.layers.get('setup')} em {sig.symbol}: stop {sig.layers.get('risco_pct')}% "
+                                f"abaixo, alvo {sig.layers.get('alvo')}, breakeven em +1R e trailing a partir de +2R. "
+                                f"Evidência: {sig.evidence}." if sig.risk is not None else
                                 f"Score de confluência {sig.layers.get('score')} em {sig.symbol} ({cfg.tf}): "
                                 f"{sig.layers.get('componentes')}." if sig.cfg else
                                 f"Confluência em {sig.symbol} ({short_name(cfg)}): tendência diária ✔, regime BTC ✔, "
@@ -364,6 +445,8 @@ class StrategyBook:
         ticker = await with_backoff(lambda: self._ex.fetch_ticker(sig.symbol), f"ticker {sig.symbol}")
         ask = float(ticker.get("ask") or ticker.get("last") or sig.price)
         fill = ask * (1 + s.max_slippage_pct)
+        if sig.risk is not None:  # same as the backtest: the stop distance is kept, anchored on the fill
+            stop, target = fill - (sig.price - stop), fill + (target - sig.price)
         stop_pct = (fill - stop) / fill
         if stop_pct <= 0:
             return None
@@ -375,12 +458,12 @@ class StrategyBook:
         if notional <= 0:
             return None
         qty = notional / fill
-        hold_minutes = cfg.exit.hold * TF_MS[cfg.tf] // 60_000
+        hold_minutes = cfg.exit.hold * tf_ms(cfg.tf) // 60_000
         pos = Position(debate_id=f"book-{int(time.time())}", mode=self.mode, symbol=sig.symbol,
                        status=PositionStatus.OPEN, quantity=qty, entry_price=fill, stop_price=stop,
                        take_profit_price=target, fees_usdt=notional * s.fee_rate,
                        setup=f"{SETUP_PREFIX}{short_name(cfg)}|hold={hold_minutes}"
-                             f"|trail={cfg.exit.trail_atr or 0}|atr={sig.atr:.8g}")
+                             f"|trail={cfg.exit.trail_atr or 0}|atr={sig.atr:.8g}{sig.meta}")
         pos.id = await self._db.insert_position(pos)
         await self._db.update_position(pos)
         await self._hub.publish("position", {"event": "opened", "position": pos.model_dump(mode="json")})
@@ -407,12 +490,12 @@ class StrategyBook:
         loss_per_unit = stop_pct + 2 * (s.fee_rate + s.max_slippage_pct)
         notional = min(equity * s.book_risk_per_trade / loss_per_unit, max(equity - committed, 0.0), free * 0.98)
         cid = client_id("e")
-        hold_minutes = cfg.exit.hold * TF_MS[cfg.tf] // 60_000
+        hold_minutes = cfg.exit.hold * tf_ms(cfg.tf) // 60_000
         pos = Position(debate_id=f"book-{int(time.time())}", mode=self.mode, symbol=sig.symbol,
                        status=PositionStatus.PENDING, quantity=notional / limit, entry_price=limit, stop_price=stop,
                        take_profit_price=target, entry_order_id=cid,
                        setup=f"{SETUP_PREFIX}{short_name(cfg)}|hold={hold_minutes}|trail={cfg.exit.trail_atr or 0}"
-                             f"|atr={sig.atr:.8g}|sd={sig.price - stop:.8g}|td={target - sig.price:.8g}|cid={cid}")
+                             f"|atr={sig.atr:.8g}|sd={sig.price - stop:.8g}|td={target - sig.price:.8g}{sig.meta}|cid={cid}")
         pos.id = await self._db.insert_position(pos)
         try:
             fill = await self._spot.buy(sig.symbol, notional, limit, cid, s.entry_order_timeout_sec)
@@ -541,15 +624,25 @@ class StrategyBook:
             meta = self._meta(p)
             trail = float(meta.get("trail", 0) or 0)
             atr = float(meta.get("atr", 0) or 0)
-            if trail and atr:  # chandelier approximated with the polled bid (never loosens)
-                new_stop = max(p.stop_price, bid - trail * atr)
-                if new_stop > p.stop_price:
-                    p.stop_price = new_stop
+            new_stop = p.stop_price
+            if meta.get("mgmt") == "be2r":  # swing: breakeven at +1R, trailing from +2R (peak tracked by the bid)
+                peak = max(float(meta.get("peak", 0) or 0), p.entry_price, bid)
+                if peak > float(meta.get("peak", 0) or 0):
+                    self._set_meta(p, peak=f"{peak:.8g}")
                     await self._db.update_position(p)
-                    if live and p.stop_order_id and self._spot is not None:  # move the exchange stop up
-                        await self._spot.cancel(p.symbol, p.stop_order_id)
-                        p.stop_order_id = None
-                        await self._place_stop(p)
+                rt = 2 * (self._s.fee_rate + self._s.max_slippage_pct)
+                new_stop = swing.new_stop(p.entry_price, p.stop_price, float(meta.get("r", 0) or 0), peak, atr,
+                                          float(meta.get("low3", 0) or 0), rt)
+                new_stop = min(new_stop, bid)  # never above the market: that would be an instant stop-out
+            elif trail and atr:  # chandelier approximated with the polled bid (never loosens)
+                new_stop = max(p.stop_price, bid - trail * atr)
+            if new_stop > p.stop_price:
+                p.stop_price = new_stop
+                await self._db.update_position(p)
+                if live and p.stop_order_id and self._spot is not None:  # move the exchange stop up
+                    await self._spot.cancel(p.symbol, p.stop_order_id)
+                    p.stop_order_id = None
+                    await self._place_stop(p)
             hold = timedelta(minutes=int(meta.get("hold", 0) or 0))
             reason: ExitReason | None = None
             price = bid
@@ -588,8 +681,12 @@ class StrategyBook:
 
     # ------------------------------------------------------------------ loop & API
 
+    def names(self) -> list[str]:
+        sw = [f"swing-{s['tf']}-{s['nome']}" for s in swing.SETUPS] if self._s.book_swing else []
+        return [short_name(c) for c in self.strategies] + sw
+
     def snapshot_light(self) -> dict[str, Any]:
-        return {"strategies": [short_name(c) for c in self.strategies], "universe": self.state.universe,
+        return {"strategies": self.names(), "universe": self.state.universe,
                 "btc_regime_ok": self.state.btc_regime_ok, "last_run": self.state.last_run,
                 "last_signals": self.state.last_signals[:10], "notes": self.state.notes,
                 "confluence": self.state.confluence[:10]}
@@ -600,10 +697,10 @@ class StrategyBook:
                 "open_positions": [json.loads(p.model_dump_json()) for p in await self.positions()]}
 
     async def run(self, stop: asyncio.Event) -> None:
-        if not self.strategies:
+        if not self.names():
             log.warning("book: no valid strategies configured; idle")
             return
-        log.info("book: running %s (%s)", ", ".join(short_name(c) for c in self.strategies),
+        log.info("book: running %s (%s)", ", ".join(self.names()),
                  "REAL ORDERS" if self._live else "paper")
         await self.reconcile()
         while not stop.is_set():

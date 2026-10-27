@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     book_top_n: int = Field(default=15, ge=3, le=40)
     book_min_range: float = 0.025
     book_max_range: float = 0.15
+    book_swing: bool = True  # swing book 1d/2d/3d (arena survivors, breakeven + trailing)
     book_live_enabled: bool = False  # second switch: real book orders need TRADING_MODE=live AND this
 
     # --- Alerts, heartbeat, backups ------------------------------------------------------

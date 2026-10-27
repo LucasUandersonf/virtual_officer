@@ -261,6 +261,7 @@ class ExitReason(str, Enum):
     MANUAL = "manual"
     ENTRY_TIMEOUT = "entry_timeout"
     TIME_STOP = "time_stop"
+    SIGNAL_EXIT = "signal_exit"
 
 
 class Position(BaseModel):
