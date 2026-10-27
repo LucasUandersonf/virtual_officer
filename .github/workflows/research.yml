@@ -32,8 +32,8 @@ jobs:
         run: python -m mqmas.research ./research waves
       - name: paper run of the live allocator on today's market (smoke test, no orders)
         run: |
-          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=120 python -m mqmas.runner
-          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=120 python -m mqmas.runner
+          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=84 TREND_TOP_N=20 TREND_VOL_TARGET=0.60 ONDAS_CAPITAL_USDT=36 python -m mqmas.runner
+          DB_PATH=./research/runner.db TREND_CAPITAL_USDT=84 TREND_TOP_N=20 TREND_VOL_TARGET=0.60 ONDAS_CAPITAL_USDT=36 python -m mqmas.runner
       - uses: actions/upload-artifact@v4
         with:
           name: research-${{ github.event.inputs.lab || 'trend' }}
