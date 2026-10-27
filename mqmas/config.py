@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     book_swing: bool = True  # swing book 1d/2d/3d (arena survivors, breakeven + trailing)
     book_live_enabled: bool = False  # second switch: real book orders need TRADING_MODE=live AND this
 
+    # --- Trend allocator (python -m mqmas.runner: one tick per cron run) ------------------
+    trend_capital_usdt: float = Field(default=50.0, gt=0)  # the allocator never manages more than this + its P&L
+    trend_vol_target: float = Field(default=0.40, gt=0, le=0.60)
+    trend_top_n: int = Field(default=10, ge=3, le=20)
+    trend_max_weight: float = Field(default=0.35, gt=0, le=0.50)
+    trend_pool_size: int = Field(default=40, ge=10, le=80)
+    trend_max_drawdown: float = Field(default=0.35, gt=0, le=0.60)  # from the equity peak: sell all and halt
+    trend_live_enabled: bool = False  # second switch: real orders need TRADING_MODE=live AND this
+    trend_kill_switch: bool = False  # true: sell everything on the next run and stay flat
+
     # --- Alerts, heartbeat, backups ------------------------------------------------------
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: str | None = None
